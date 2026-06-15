@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "Building and pushing...",
+            "command": "jq -r '.tool_input.file_path // \"\"' | { read -r f; echo \"$f\" | grep -qE 'src/[^/]+\\.(cpp|h)$' && make -C /home/brianvarren/reverb/build && git -C /home/brianvarren/reverb add -A && git -C /home/brianvarren/reverb commit -m 'wip [auto]' && git -C /home/brianvarren/reverb push || true; }"
+          }
+        ]
+      }
+    ]
+  }
+}
