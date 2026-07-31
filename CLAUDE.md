@@ -20,6 +20,21 @@ Binary: `build/reverb`
 # q  → quit
 ```
 
+## Fast iteration (tuning DSP params)
+
+`build/render` is an offline renderer with no RtAudio/audio-device dependency:
+pushes an impulse through `Schroeder`, writes a WAV, exits. ~10ms to render a
+few seconds of tail. All Schroeder params (fb, damp, allpass gain, delay
+times) are CLI flags — most tuning tweaks need no recompile.
+
+```bash
+./tools/listen.sh --fb 0.8 --damp 0.3      # rebuild + render + play, one command
+./build/render --help                       # see all flags and current defaults
+```
+
+Use this loop instead of `build/reverb` while tuning; reach for `build/reverb`
+only to confirm the realtime path still works.
+
 ## Workflow preferences
 
 - After every successful build: `git add -A && git commit -m "wip" && git push`

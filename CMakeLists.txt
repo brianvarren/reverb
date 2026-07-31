@@ -13,3 +13,8 @@ target_compile_options(reverb PRIVATE -O2 -Wall)
 target_include_directories(reverb PRIVATE ${RTAUDIO_INCLUDE_DIRS})
 target_link_libraries(reverb PRIVATE ${RTAUDIO_LIBRARIES})
 target_link_directories(reverb PRIVATE ${RTAUDIO_LIBRARY_DIRS})
+
+# Offline renderer — no RtAudio dependency, so it builds fast and needs no
+# audio device. This is the primary fast-iteration path for DSP tuning.
+add_executable(render src/render.cpp)
+target_compile_options(render PRIVATE -O2 -Wall)
