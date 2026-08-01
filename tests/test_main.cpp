@@ -10,6 +10,7 @@
 #include "shelf.h"
 #include "allpass.h"
 #include "early.h"
+#include "rotation.h"
 
 // ── §9.1  pitch_to_samples ───────────────────────────────────────────────────
 
@@ -340,5 +341,64 @@ TEST_CASE("Early: autocorrelation of ER burst < 0.3 for lags 100..2000") {
         for (size_t n = 0; n + lag < kN; ++n)
             c += irL[n] * irL[n + lag];
         CHECK(std::abs(c / e0) < 0.3);
+    }
+}
+
+// ── Stage 6  Rotation stage ───────────────────────────────────────────────────
+
+TEST_CASE("Rotation: energy preserved for 1000 random vectors, five angles") {
+    const float angles[] = { 0.f,
+                              float(M_PI) / 6.f,
+                              float(M_PI) / 4.f,
+                              float(M_PI) / 3.f,
+                              float(M_PI) / 2.f };
+    uint32_t rng = 0xBAADF00D;
+    auto randf = [&]() -> float {
+        rng = rng * 1664525u + 1013904223u;
+        return (float(int32_t(rng)) / float(0x80000000u));
+    };
+
+    for (float th : angles) {
+        Rotation rot;
+        rot.SetAngle(th);
+        for (int i = 0; i < 1000; ++i) {
+            float a = randf(), b = randf();
+            float norm_sq_in = a * a + b * b;
+            rot.Process(a, b);
+            float norm_sq_out = a * a + b * b;
+            CHECK(std::abs(norm_sq_out - norm_sq_in) < 1e-6f);
+        }
+    }
+}
+
+TEST_CASE("Rotation: RᵀR == I within 1e-6, five angles") {
+    // Apply R to standard basis vectors, reconstruct Rᵀ, verify Rᵀ R = I.
+    const float angles[] = { 0.f,
+                              float(M_PI) / 6.f,
+                              float(M_PI) / 4.f,
+                              float(M_PI) / 3.f,
+                              float(M_PI) / 2.f };
+    for (float th : angles) {
+        Rotation rot;
+        rot.SetAngle(th);
+
+        // Column 0: R * [1, 0]
+        float r00 = 1.f, r10 = 0.f;
+        rot.Process(r00, r10);
+        // Column 1: R * [0, 1]
+        float r01 = 0.f, r11 = 1.f;
+        rot.Process(r01, r11);
+
+        // RᵀR — each entry is dot product of rows of R (= columns of Rᵀ)
+        // Rᵀ rows are R columns: [r00, r10], [r01, r11]
+        float rtr00 = r00*r00 + r10*r10;  // should be 1
+        float rtr01 = r00*r01 + r10*r11;  // should be 0
+        float rtr10 = r01*r00 + r11*r10;  // should be 0
+        float rtr11 = r01*r01 + r11*r11;  // should be 1
+
+        CHECK(std::abs(rtr00 - 1.f) < 1e-6f);
+        CHECK(std::abs(rtr01)       < 1e-6f);
+        CHECK(std::abs(rtr10)       < 1e-6f);
+        CHECK(std::abs(rtr11 - 1.f) < 1e-6f);
     }
 }
