@@ -9,6 +9,7 @@
 #include "delay.h"
 #include "shelf.h"
 #include "allpass.h"
+#include "early.h"
 
 // ── §9.1  pitch_to_samples ───────────────────────────────────────────────────
 
@@ -106,8 +107,6 @@ static double shelf_analytic_mag(double a_h, double A_h,
     return std::abs(H_hs * H_ls);
 }
 
-// Settle a shelf and measure its steady-state gain via quadrature estimator.
-// Phase accumulator avoids sinf precision loss at large arguments.
 static float measure_shelf_gain(float hf_hz, float hb_lin,
                                  float lf_hz, float lb_lin,
                                  float freq, float fs,
@@ -180,7 +179,6 @@ TEST_CASE("Shelf<true>: max gain <= 1.0 for 100 random in-loop param sets") {
 
 // ── §9.4  AllPass ────────────────────────────────────────────────────────────
 
-// Settle an AllPass and measure steady-state gain via quadrature estimator.
 static float measure_ap_gain(AllPass& ap, float freq, float fs,
                               int n_settle = 8192) {
     const float omega = 2.f * float(M_PI) * freq / fs;
@@ -201,33 +199,21 @@ static float measure_ap_gain(AllPass& ap, float freq, float fs,
 }
 
 TEST_CASE("AllPass: flat magnitude (|H|=1) with shelf bypassed, within 0.01 dB") {
-    // Bypass shelf: hb_lin=1 (high shelf identity) + lf_hz=0, lb_lin=0
-    // (low shelf with a=0 and A=0 → output = 1*HP = x, unity gain).
     constexpr float kFS    = 48000.f;
     constexpr size_t kBuf  = 4096;
-    constexpr float  kD    = 100.f;   // 100-sample delay
 
-    std::vector<float> buf(kBuf, 0.f);
-    AllPass ap;
-    ap.Init(buf.data(), kBuf, kFS);
-    ap.SetGain(0.70f);
-    ap.SetShelf(1000.f, 1.0f, 0.0f, 0.0f, kFS);   // bypass
-    ap.SnapDelay(kD);
-
-    // 20 log-spaced frequencies; skip very low (< 50 Hz) to keep settle fast
     for (int i = 0; i < 20; ++i) {
-        float freq = 50.f * powf(400.f, float(i) / 19.f);   // 50 Hz → 20 kHz
+        float freq = 50.f * powf(400.f, float(i) / 19.f);
 
-        // Fresh AllPass per frequency to avoid cross-contamination
-        std::vector<float> b2(kBuf, 0.f);
-        AllPass ap2;
-        ap2.Init(b2.data(), kBuf, kFS);
-        ap2.SetGain(0.70f);
-        ap2.SetShelf(1000.f, 1.0f, 0.0f, 0.0f, kFS);
-        ap2.SnapDelay(kD);
+        std::vector<float> buf(kBuf, 0.f);
+        AllPass ap;
+        ap.Init(buf.data(), kBuf, kFS);
+        ap.SetGain(0.70f);
+        ap.SetShelf(1000.f, 1.0f, 0.0f, 0.0f, kFS);
+        ap.SnapDelay(100.f);
 
-        float gain   = measure_ap_gain(ap2, freq, kFS, /*settle=*/8192);
-        float gdb    = 20.f * log10f(std::max(gain, 1e-9f));
+        float gain = measure_ap_gain(ap, freq, kFS, 8192);
+        float gdb  = 20.f * log10f(std::max(gain, 1e-9f));
         CHECK(std::abs(gdb) < 0.01f);
     }
 }
@@ -238,7 +224,7 @@ TEST_CASE("AllPass: magnitude <= 1 with shelf active") {
     const float hf_hz  = pitch_to_hz(96.f);
     const float hb_lin = db_to_lin(-6.f);
     const float lf_hz  = pitch_to_hz(60.f);
-    const float lb_lin = 0.f;   // 0 dB at DC with this formulation
+    const float lb_lin = 0.f;
 
     for (int i = 0; i < 20; ++i) {
         float freq = 50.f * powf(400.f, float(i) / 19.f);
@@ -251,15 +237,11 @@ TEST_CASE("AllPass: magnitude <= 1 with shelf active") {
         ap.SnapDelay(100.f);
 
         float gain = measure_ap_gain(ap, freq, kFS);
-        CHECK(gain <= 1.001f);   // tiny epsilon for floating-point rounding
+        CHECK(gain <= 1.001f);
     }
 }
 
 TEST_CASE("AllPass: impulse response has tap train at spacing d") {
-    // With shelf bypassed and delay d=64:
-    //   h[0]  = -g
-    //   h[d]  = 1 - g²   (first echo through the loop)
-    //   intermediate samples ≈ 0
     constexpr float  kFS  = 48000.f;
     constexpr size_t kBuf = 256;
     constexpr int    kD   = 64;
@@ -269,21 +251,94 @@ TEST_CASE("AllPass: impulse response has tap train at spacing d") {
     AllPass ap;
     ap.Init(buf.data(), kBuf, kFS);
     ap.SetGain(kG);
-    ap.SetShelf(1000.f, 1.0f, 0.0f, 0.0f, kFS);   // bypass
+    ap.SetShelf(1000.f, 1.0f, 0.0f, 0.0f, kFS);
     ap.SnapDelay(float(kD));
 
     std::vector<float> h(kD + 10);
-    h[0] = ap.Process(1.f);   // unit impulse
+    h[0] = ap.Process(1.f);
     for (int n = 1; n < kD + 10; ++n)
         h[n] = ap.Process(0.f);
 
-    // First sample: -g
     CHECK(std::abs(h[0] - (-kG)) < 1e-5f);
 
-    // Samples 1..d-1: should be zero (delay hasn't wrapped yet)
     for (int n = 1; n < kD; ++n)
         CHECK(std::abs(h[n]) < 1e-5f);
 
-    // Sample at delay d: (1 - g²)
     CHECK(std::abs(h[kD] - (1.f - kG * kG)) < 1e-5f);
+}
+
+// ── Stage 5  Early section ────────────────────────────────────────────────────
+
+// Run N samples of Early section's impulse response (mono impulse, L=R=1 at n=0).
+static void early_ir(const Params& p, float fs,
+                     std::vector<float>& irL, std::vector<float>& irR, size_t N) {
+    constexpr size_t kBuf = 4096;
+    float storage[8][kBuf] = {};
+    float* bufs[8];
+    for (int i = 0; i < 8; ++i) bufs[i] = storage[i];
+
+    Early e;
+    e.Init(bufs, kBuf, fs);
+    e.SnapParams(p, fs);
+
+    irL.resize(N);
+    irR.resize(N);
+    e.Process(1.f, 1.f, irL[0], irR[0]);
+    for (size_t n = 1; n < N; ++n)
+        e.Process(0.f, 0.f, irL[n], irR[n]);
+}
+
+static double cross_corr(const std::vector<float>& a, const std::vector<float>& b) {
+    double ab = 0, aa = 0, bb = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        ab += a[i] * b[i];
+        aa += a[i] * a[i];
+        bb += b[i] * b[i];
+    }
+    if (aa < 1e-20 || bb < 1e-20) return 1.0;
+    return ab / std::sqrt(aa * bb);
+}
+
+TEST_CASE("Early: L/R correlation drops as ErSym rises") {
+    // With sym=0 and pd_sym=0, L and R are identical → corr == 1.
+    // With sym=2, delay structures differ → measurably lower correlation.
+    constexpr float kFS = 48000.f;
+    constexpr size_t kN = 10000;
+
+    Params p0; p0.er_sym = 0.f; p0.pd_sym = 0.f;
+    std::vector<float> L0, R0;
+    early_ir(p0, kFS, L0, R0, kN);
+    double corr0 = cross_corr(L0, R0);
+    CHECK(corr0 > 0.9999);   // sym=0, pd_sym=0 → must be identical
+
+    Params p2; p2.er_sym = 2.f; p2.pd_sym = 0.3f;
+    std::vector<float> L2, R2;
+    early_ir(p2, kFS, L2, R2, kN);
+    double corr2 = cross_corr(L2, R2);
+    CHECK(corr2 < 0.80);     // meaningful decorrelation at sym=2
+    CHECK(corr2 < corr0);    // monotone: more sym → less correlation
+}
+
+TEST_CASE("Early: autocorrelation of ER burst < 0.3 for lags 100..2000") {
+    // Lags 1..~10 are high due to shelf low-passing — that's expected and
+    // irrelevant (it's not metallic ring). We check from lag 100 onward,
+    // which covers the allpass delay lengths (~617, 824, 1038 samples).
+    // A peak >= 0.3 there would indicate a periodic tap pattern (metallic ring).
+    constexpr float  kFS = 48000.f;
+    constexpr size_t kN  = 10000;
+
+    Params p;
+    std::vector<float> irL, irR;
+    early_ir(p, kFS, irL, irR, kN);
+
+    double e0 = 0;
+    for (auto v : irL) e0 += v * v;
+    REQUIRE(e0 > 1e-10);   // sanity: early section must produce output
+
+    for (int lag = 100; lag <= 2000; ++lag) {
+        double c = 0;
+        for (size_t n = 0; n + lag < kN; ++n)
+            c += irL[n] * irL[n + lag];
+        CHECK(std::abs(c / e0) < 0.3);
+    }
 }
