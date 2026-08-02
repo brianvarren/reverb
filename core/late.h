@@ -33,6 +33,7 @@ public:
     void Init(float* bufs[8], size_t diff_sz, size_t long_sz,
               float fs, size_t block_sz = 48) {
         float blk_dt = float(block_sz) / fs;
+        block_sz_ = float(block_sz);
         for (int k = 0; k < 3; ++k) {
             dlL_[k].Init(bufs[k],     diff_sz);
             dlR_[k].Init(bufs[k + 3], diff_sz);
@@ -67,14 +68,14 @@ public:
         _update_shelves(p, fs);
         _update_fb(fs, p.rt60_s, p.bloom);
         _update_lfo(p, fs);
-        _step_lfo();
+        _step_lfo(block_sz_);
         block_lfo_ = true;
     }
 
     void Process(float eL, float eR, float& outL, float& outR) {
         // Host path: no UpdateBlock caller, so advance LFO per sample.
         // Firmware calls UpdateBlock once per block, so Process must not re-advance.
-        if (!block_lfo_) _step_lfo();
+        if (!block_lfo_) _step_lfo(1.f);
 
         float aL = eL + fbR_;
         float aR = eR + fbL_;
@@ -143,9 +144,14 @@ private:
     // Advances the phase and recomputes all 8 modulation offsets (samples).
     // Eight equally-spaced taps: mod_[0..3] = L diffusers + long delay,
     // mod_[4..7] = R diffusers + long delay.
-    void _step_lfo() {
-        lfo_phase_ += lfo_inc_;
-        if (lfo_phase_ >= 1.f) lfo_phase_ -= 1.f;
+    //
+    // `stride` is how many sample periods this call represents.  lfo_inc_ is a
+    // per-sample increment, so the per-sample path passes 1 and the block-rate
+    // path (UpdateBlock — firmware and the TUI) passes the block size.  Without
+    // this the block path runs the LFO block_sz times too slow.
+    void _step_lfo(float stride) {
+        lfo_phase_ += lfo_inc_ * stride;
+        while (lfo_phase_ >= 1.f) lfo_phase_ -= 1.f;
         const float kTwoPi = 2.f * float(M_PI);
         for (int k = 0; k < 8; ++k)
             mod_[k] = lfo_depth_ * sinf(kTwoPi * (lfo_phase_ + k * 0.125f));
@@ -163,6 +169,7 @@ private:
     float        fbL_ = 0.f, fbR_ = 0.f;
     float        fb_gain_ = 0.5f;
     float        lfo_phase_ = 0.f, lfo_inc_ = 0.f, lfo_depth_ = 0.f;
+    float        block_sz_  = 48.f;
     float        mod_[8] = {};
     bool         block_lfo_ = false;
 };

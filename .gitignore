@@ -1,2 +1,4 @@
 build/
 .claude/*.tmp.*
+
+tui/miniaudio.h

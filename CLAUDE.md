@@ -45,6 +45,44 @@ Produces `build/verb_cli` and `build/verb_tests`.
 
 Stats (peak, RMS, nan/inf count) are printed to stderr on every render.
 
+## Realtime tuning bench (`verb_tui`)
+
+```bash
+./build/verb_tui params.txt                  # live, arrow keys tune everything
+./build/verb_tui params.txt --in loop.wav    # also loop a file through it
+./build/verb_tui --list-devices              # pick output with --device N
+```
+
+ncurses + miniaudio. Drives the reverb through the **block-rate path**
+(`UpdateBlock` every 48 frames, then `Process` per sample), so it exercises the
+same control-rate behaviour the firmware will.
+
+| key | |
+|---|---|
+| `up`/`dn` | select parameter |
+| `left`/`right` | adjust (shift = coarse, `,`/`.` = fine) |
+| `Enter` / `Del` | type a value / reset to default |
+| `space` | trigger current signal |
+| `a w s e d f t g y h u j k o l p` | play that signal at pitch |
+| `z`/`x` | octave down/up |
+| `1` `2` `3` `4` | impulse / noise / sine / saw |
+| `r` | auto-retrigger |
+| `c` `m` `b` `i` | clear tail / mute / bypass / file loop |
+| `v` | A/B compare |
+| `F2` `F3` `F5` | save / reload / defaults |
+
+Readouts: pitch parameters resolved to ms and Hz, loop length, `fb_gain` (with
+a CAP flag), a normalised tail-envelope graph, and measured **T60 / EDT** from
+Schroeder backward integration of the decay after each trigger.
+
+EDT is the number to watch when tuning `bloom`: EDT well above T60 means the
+tail is still building after the source stops, which is the SMD swell. Measured
+T60 always lands short of `rt60_s x bloom` — four in-loop shelf passes per
+round trip absorb energy the formula does not account for. At defaults the
+12.6 s target measures ~8.4 s.
+
+miniaudio.h is fetched by CMake on first configure and gitignored.
+
 ## Fast iteration loop
 
 Edit `params.txt`, re-run. The params file is re-read on every invocation — no recompile needed for parameter changes. Suggested shell loop:
