@@ -33,10 +33,10 @@
 
 class Engine {
 public:
-    static constexpr size_t kBlock     = 48;      // control block, matches firmware
-    static constexpr size_t kEarlyBuf  = 8192;    // 170 ms predelay ceiling
-    static constexpr size_t kDiffBuf   = 4096;
-    static constexpr size_t kLongBuf   = 8192;
+    static constexpr size_t kBlock     = 48;       // control block, matches firmware
+    static constexpr size_t kEarlyBuf  = 16384;   // 341 ms predelay ceiling
+    static constexpr size_t kDiffBuf   = 8192;
+    static constexpr size_t kLongBuf   = 16384;
     static constexpr int    kHistLen   = 240;     // tail graph, one cell per hop
     static constexpr int    kHistHop   = 20;      // blocks per cell → 20 ms/cell
 

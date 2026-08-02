@@ -40,7 +40,7 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* the reverb merges with the source.  Above ~60 ms it separates into a  */ \
     /* distinct audible event — useful for tape-delay character, disorienting */ \
     /* at long decay times.  The ceiling is 170 ms, set by the buffer size.  */ \
-    X(predelay_ms, "predelay_ms",      40.f,    0.f,  170.f,  kLin,   "ms",   "Pre-delay"          ) \
+    X(predelay_ms, "predelay_ms",      40.f,    0.f,  300.f,  kLin,   "ms",   "Pre-delay"          ) \
                                                                                \
     /* pd_sym  [0 – 25 ms, squared]                                         */ \
     /* Offsets L and R predelay times in opposite directions:                */ \
@@ -50,7 +50,7 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* and statically, before any diffusion.  Squared mapping keeps the      */ \
     /* useful 0–5 ms range across the bottom half of the knob.  Above ~8 ms  */ \
     /* the channels start to feel like two independent reverbs.              */ \
-    X(pd_sym,      "pd_sym",            0.3f,   0.f,   25.f,  kSq,    "ms",   "Pre-delay spread"   ) \
+    X(pd_sym,      "pd_sym",            0.3f,   0.f,  100.f,  kSq,    "ms",   "Pre-delay spread"   ) \
                                                                                \
     /* ── EARLY SECTION ─────────────────────────────────────────────────── */ \
     /* Three Schroeder allpasses in series, per channel, followed by a       */ \
@@ -66,7 +66,7 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* Smaller values: tight, close reflections, reads as a small space.     */ \
     /* Larger values: echoes further apart, reads as a large hall or cave.   */ \
     /* This shapes the first 50–100 ms — the part that defines room geometry.*/ \
-    X(er_sz,       "er_sz",            30.f,   18.f,   48.f,  kPitch, "pitch","Early size"         ) \
+    X(er_sz,       "er_sz",            30.f,    6.f,   66.f,  kPitch, "pitch","Early size"         ) \
                                                                                \
     /* er_sym  [0 – 6 semitones, linear]                                    */ \
     /* Detunes L and R early chains by ±er_sym semitones:                   */ \
@@ -75,7 +75,7 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* so the two chains stay proportionally offset at any er_sz.  Even      */ \
     /* 0.5 semitones (~3%) fully decorrelates the two reflection patterns.   */ \
     /* Keep below ~4 semi; above that the channels sound like different rooms.*/ \
-    X(er_sym,      "er_sym",            1.f,    0.f,    6.f,  kLin,   "semi", "Early width"        ) \
+    X(er_sym,      "er_sym",            1.f,    0.f,   12.f,  kLin,   "semi", "Early width"        ) \
                                                                                \
     /* er_dffs  [0.45 – 0.80, linear]                                       */ \
     /* Schroeder allpass coefficient g.  In the allpass structure:           */ \
@@ -85,7 +85,7 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* spread most evenly across time.  Approaching 1: denser but buzzy —   */ \
     /* the allpass internal feedback starts to resonate.                     */ \
     /* 0.65–0.75 is the sweet spot: diffuse without harshness.              */ \
-    X(er_dffs,     "er_dffs",           0.68f,  0.45f,  0.80f,kLin,   "",     "Early diffusion"    ) \
+    X(er_dffs,     "er_dffs",           0.68f,  0.0f,   0.98f,kLin,   "",     "Early diffusion"    ) \
                                                                                \
     /* ── LATE SECTION ──────────────────────────────────────────────────── */ \
     /* Cross-coupled stereo feedback loop: three rotation-diffuser stages,   */ \
@@ -101,7 +101,7 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* audible modal colouration (individual frequencies ring before fading). */ \
     /* Larger: sparser echoes, more diffuse, "washy" — less colouration but  */ \
     /* also less sense of a defined space.                                   */ \
-    X(lt_sz,       "lt_sz",            24.f,   12.f,   42.f,  kPitch, "pitch","Late size"          ) \
+    X(lt_sz,       "lt_sz",            24.f,    6.f,   54.f,  kPitch, "pitch","Late size"          ) \
                                                                                \
     /* lt_sym  [0 – 8 semitones, linear]                                    */ \
     /* SzL / SzR detune for the late loop.  The two cross-coupled channels  */ \
@@ -109,7 +109,7 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* frequencies so neither rings in sympathy with the other.  Result:     */ \
     /* a wide, tonally neutral late tail.  1–2 semi is usually enough;       */ \
     /* large values make the two channels sound tonally dissimilar.          */ \
-    X(lt_sym,      "lt_sym",            1.2f,   0.f,    8.f,  kLin,   "semi", "Late width"         ) \
+    X(lt_sym,      "lt_sym",            1.2f,   0.f,   12.f,  kLin,   "semi", "Late width"         ) \
                                                                                \
     /* lt_theta  [0 – π/4 radians, linear]                                  */ \
     /* Rotation angle in the 2×2 orthogonal diffuser before each delay read: */ \
@@ -134,7 +134,7 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* Note: in-loop shelves absorb HF on every pass, so measured T60 at     */ \
     /* high frequencies is shorter than this value — rt60_s targets mids.    */ \
     /* This is normal; real rooms have frequency-dependent decay too.         */ \
-    X(rt60_s,      "rt60_s",            4.f,    0.2f,  30.f,  kExp,   "s",    "Decay"              ) \
+    X(rt60_s,      "rt60_s",            4.f,    0.05f, 120.f,  kExp,   "s",    "Decay"              ) \
                                                                                \
     /* bloom  [1 – 6×, linear]                                              */ \
     /* Multiplier on the effective RT60 used in the fb_gain formula:         */ \
@@ -146,7 +146,7 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* the tail falls immediately from the onset.  At the default (π ≈ 3.14) */ \
     /* fb_gain targets ~3× the realised decay — rich, late-building.        */ \
     /* Reduce bloom if the tail sounds unstable or overly swollen.           */ \
-    X(bloom,       "bloom",             3.14f,  1.f,    6.f,  kLin,   "x",    "Bloom"              ) \
+    X(bloom,       "bloom",             3.14f,  0.25f,  12.f,  kLin,   "x",    "Bloom"              ) \
                                                                                \
     /* ── MODULATION ────────────────────────────────────────────────────── */ \
                                                                                \
@@ -161,7 +161,7 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* to smooth spectral density.  Above ~2 ms: shimmer or chorus.          */ \
     /* Above 4 ms the modulation itself dominates the timbral character.     */ \
     /* Squared mapping keeps 0.2–1.5 ms across the bottom half of the knob. */ \
-    X(mod_ms,      "mod_ms",            0.6f,   0.f,    6.f,  kSq,    "ms",   "Motion depth"       ) \
+    X(mod_ms,      "mod_ms",            0.6f,   0.f,   20.f,  kSq,    "ms",   "Motion depth"       ) \
                                                                                \
     /* mod_hz  [0.02 – 5 Hz, exponential]                                   */ \
     /* LFO rate driving all eight modulators.  Equally-spaced phases provide */ \
@@ -171,7 +171,7 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* spectral freezing on long decays.                                     */ \
     /* > 2 Hz: audible pitch vibrato in the tail.  > 4 Hz: thick flutter.   */ \
     /* Exponential mapping because useful rates span two decades.            */ \
-    X(mod_hz,      "mod_hz",            0.7f,   0.02f,  5.f,  kExp,   "Hz",   "Motion rate"        ) \
+    X(mod_hz,      "mod_hz",            0.7f,   0.005f, 20.f,  kExp,   "Hz",   "Motion rate"        ) \
                                                                                \
     /* ── IN-LOOP SHELVES (dmp_*) ───────────────────────────────────────── */ \
     /* Two-band shelf inside the feedback loop: one per rotation-diffuser    */ \
@@ -186,7 +186,7 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* Controls where HF roll-off begins each loop pass.  Lower = earlier    */ \
     /* roll-off, darker and warmer tail.  Higher = roll-off starts later,    */ \
     /* more high content circulates before being absorbed.                   */ \
-    X(dmp_hf,      "dmp_hf",           96.f,   60.f,  120.f,  kPitch, "pitch","Damp HF corner"     ) \
+    X(dmp_hf,      "dmp_hf",           96.f,   24.f,  127.f,  kPitch, "pitch","Damp HF corner"     ) \
                                                                                \
     /* dmp_hb  [−24 – 0 dB, linear]                                         */ \
     /* Gain of the in-loop high shelf.  The primary "Dark" control.          */ \
@@ -196,14 +196,14 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* makes a reverb "dark" — highs fade first, leaving a progressively      */ \
     /* lower-frequency tail.  At −24 dB: HF is nearly gone within the first  */ \
     /* few passes.                                                           */ \
-    X(dmp_hb,      "dmp_hb",           -7.f,  -24.f,    0.f,  kLin,   "dB",   "Dark"               ) \
+    X(dmp_hb,      "dmp_hb",           -7.f,  -48.f,    0.f,  kLin,   "dB",   "Dark"               ) \
                                                                                \
     /* dmp_lf  [pitch 24 – 84, pitch curve]                                 */ \
     /* Corner frequency of the in-loop low shelf.                            */ \
     /* pitch_to_hz(24) ≈ 33 Hz,  pitch_to_hz(84) ≈ 1047 Hz.               */ \
     /* Higher values push the corner into the midrange, thinning more bass   */ \
     /* on each pass.                                                         */ \
-    X(dmp_lf,      "dmp_lf",           60.f,   24.f,   84.f,  kPitch, "pitch","Damp LF corner"     ) \
+    X(dmp_lf,      "dmp_lf",           60.f,   12.f,   96.f,  kPitch, "pitch","Damp LF corner"     ) \
                                                                                \
     /* dmp_lb  [−24 – 0 dB, linear]                                         */ \
     /* Gain of the in-loop low shelf.  "Thin" — reduces bass accumulation.   */ \
@@ -211,7 +211,7 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* or muddy on bass-heavy material.  −6 to −12 dB clears low-end buildup */ \
     /* without changing the mid/high character.  Essential on full mixes or  */ \
     /* bass instruments.  Below −18 dB the tail sounds noticeably thin.      */ \
-    X(dmp_lb,      "dmp_lb",            0.f,  -24.f,    0.f,  kLin,   "dB",   "Thin"               ) \
+    X(dmp_lb,      "dmp_lb",            0.f,  -48.f,    0.f,  kLin,   "dB",   "Thin"               ) \
                                                                                \
     /* ── OUTPUT SHELF (eo_*) ───────────────────────────────────────────── */ \
     /* Applied to the wet signal after the loop, before the D/W crossfade.   */ \
@@ -222,25 +222,25 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* Corner of the output high shelf.  Same pitch-to-Hz as dmp_hf.         */ \
     /* Setting this higher than dmp_hf lets you boost only the very top      */ \
     /* ("air") without affecting the main body of the reverb.                */ \
-    X(eo_hf,       "eo_hf",           100.f,   60.f,  120.f,  kPitch, "pitch","Out HF corner"      ) \
+    X(eo_hf,       "eo_hf",           100.f,   24.f,  127.f,  kPitch, "pitch","Out HF corner"      ) \
                                                                                \
     /* eo_hb  [−18 – +12 dB, linear]                                        */ \
     /* Gain of the output high shelf.  Positive: adds air or sparkle —       */ \
     /* restores brightness the in-loop damping removed, or intentionally      */ \
     /* brightens a dark room.  Negative: further dulls the wet signal.       */ \
     /* Because this is outside the loop, boosting here is safe.              */ \
-    X(eo_hb,       "eo_hb",            -3.f,  -18.f,   12.f,  kLin,   "dB",   "Out HF gain"        ) \
+    X(eo_hb,       "eo_hb",            -3.f,  -24.f,   24.f,  kLin,   "dB",   "Out HF gain"        ) \
                                                                                \
     /* eo_lf  [pitch 24 – 84, pitch curve]                                  */ \
     /* Corner of the output low shelf.  Same pitch-to-Hz as dmp_lf.          */ \
-    X(eo_lf,       "eo_lf",            65.f,   24.f,   84.f,  kPitch, "pitch","Out LF corner"      ) \
+    X(eo_lf,       "eo_lf",            65.f,   12.f,   96.f,  kPitch, "pitch","Out LF corner"      ) \
                                                                                \
     /* eo_lb  [−18 – +12 dB, linear]                                        */ \
     /* Gain of the output low shelf.  Default +3 dB compensates for the bass */ \
     /* dmp_lb removes from the loop — restores some low-end body to the wet  */ \
     /* signal without the muddiness of free bass recirculation.              */ \
     /* Cut to thin the reverb; boost to add warmth or weight.               */ \
-    X(eo_lb,       "eo_lb",             3.f,  -18.f,   12.f,  kLin,   "dB",   "Out LF gain"        ) \
+    X(eo_lb,       "eo_lb",             3.f,  -24.f,   24.f,  kLin,   "dB",   "Out LF gain"        ) \
                                                                                \
     /* ── CROSSFADES ────────────────────────────────────────────────────── */ \
     /* Both use equal-power (cos/sin) mixing.  Linear mixing creates a 3 dB  */ \
