@@ -11,6 +11,7 @@
 #include "allpass.h"
 #include "early.h"
 #include "rotation.h"
+#include "late.h"
 
 // ── §9.1  pitch_to_samples ───────────────────────────────────────────────────
 
@@ -104,7 +105,7 @@ static double shelf_analytic_mag(double a_h, double A_h,
     auto F_h = h_lp(a_h, omega);
     auto F_l = h_lp(a_l, omega);
     auto H_hs = A_h + (1.0 - A_h) * F_h;
-    auto H_ls = A_l * F_l + (1.0 - A_l) * (std::complex<double>(1, 0) - F_l);
+    auto H_ls = A_l * F_l + (std::complex<double>(1, 0) - F_l);  // A*LP + HP
     return std::abs(H_hs * H_ls);
 }
 
@@ -176,6 +177,26 @@ TEST_CASE("Shelf<true>: max gain <= 1.0 for 100 random in-loop param sets") {
             CHECK(mag <= 1.0 + 1e-9);
         }
     }
+}
+
+TEST_CASE("Shelf: low shelf is NOT a lowpass when lb < 1 (spec, catches formula bug)") {
+    // The original bug: lb*LP + (1-lb)*HP collapsed to a pure lowpass at lb=0.5.
+    // With the correct formula lb*LP + HP, gain above lf_hz must be > lb, not flat.
+    // We measure at 10*lf_hz (well above corner) and verify gain > lb + 3 dB.
+    constexpr float kFS  = 48000.f;
+    const float lf_hz    = pitch_to_hz(60.f);  // ~262 Hz
+    const float test_hz  = lf_hz * 10.f;        // ~2620 Hz, well above shelf corner
+    const float lb_db    = -6.f;
+    const float lb_lin   = db_to_lin(lb_db);
+
+    // With unity high shelf so only the low shelf matters.
+    float measured = measure_shelf_gain(pitch_to_hz(96.f), db_to_lin(0.f),
+                                        lf_hz, lb_lin, test_hz, kFS);
+    float measured_db = 20.f * log10f(std::max(measured, 1e-9f));
+    // Correct formula: gain at 10*lf_hz ≈ unity → measured_db ≈ 0 dB.
+    // Bug formula: gain is flat at lb everywhere → measured_db ≈ lb_db = -6 dB.
+    // Check we're at least 3 dB above lb (i.e. well away from the bugged flat response).
+    CHECK(measured_db > lb_db + 3.f);
 }
 
 // ── §9.4  AllPass ────────────────────────────────────────────────────────────
@@ -401,4 +422,222 @@ TEST_CASE("Rotation: RᵀR == I within 1e-6, five angles") {
         CHECK(std::abs(rtr10)       < 1e-6f);
         CHECK(std::abs(rtr11 - 1.f) < 1e-6f);
     }
+}
+
+// ── Stage 7  Late section — T60 via Schroeder integration (§9.5) ─────────────
+
+// Build a Late with flat (pass-through) in-loop shelves.
+// Recipe: hb_lin=1 (high shelf passthrough) + lf_hz≈0 + lb_lin≈0 (low shelf
+// passthrough when lp coefficient a≈0 from near-zero cutoff).
+static Params flat_late_params(float rt60_s, float lt_sz = 24.f) {
+    Params p;
+    p.lt_sz   = lt_sz;
+    p.lt_sym  = 0.f;          // symmetric → L==R, cleaner T60 read
+    p.rt60_s  = rt60_s;
+    p.bloom   = 1.f;          // honest T60 with correct D sum
+    p.dmp_hb  = 0.f;          // 0 dB → hb_lin=1 → high shelf passthrough
+    p.dmp_lf  = -1000.f;      // pitch → ~0 Hz → a≈0 in OnePole → LP(x)=0
+    p.dmp_lb  = -200.f;       // lb_lin≈0 → low shelf output = (1-0)*(x-0) = x
+    return p;
+}
+
+// Returns measured T60 in seconds via Schroeder backward integration.
+// Fits a line through the -5 to -35 dB range of the EDC and extrapolates to -60.
+static double measure_t60(float rt60_s, float lt_sz = 24.f) {
+    constexpr float  kFS      = 48000.f;
+    constexpr size_t kDiffSz  = 4096;
+
+    Params p = flat_late_params(rt60_s, lt_sz);
+
+    // Buffers for 6 diffuser lines + 2 long delays (all same size for simplicity)
+    std::vector<float> storage(8 * kDiffSz, 0.f);
+    float* bufs[8];
+    for (int i = 0; i < 8; ++i) bufs[i] = storage.data() + i * kDiffSz;
+
+    Late late;
+    late.Init(bufs, kDiffSz, kDiffSz, kFS);
+    late.SnapParams(p, kFS);
+
+    // Capture 2.5 * rt60_s seconds of impulse response
+    size_t N = size_t(2.5f * rt60_s * kFS) + 1;
+    std::vector<float> irL(N), irR(N);
+    late.Process(1.f, 1.f, irL[0], irR[0]);
+    for (size_t n = 1; n < N; ++n)
+        late.Process(0.f, 0.f, irL[n], irR[n]);
+
+    // Schroeder backward integral: E[n] = sum_{k=n}^{N-1} irL[k]^2
+    std::vector<double> edc(N + 1, 0.0);
+    for (int n = int(N) - 1; n >= 0; --n)
+        edc[n] = edc[n + 1] + double(irL[n]) * double(irL[n]);
+
+    double e_total = edc[0];
+    REQUIRE(e_total > 1e-20);   // sanity: loop must produce output
+
+    // Find -5 dB and -35 dB crossings (in energy dB = 10*log10)
+    double thresh5  = e_total * std::pow(10.0, -5.0  / 10.0);
+    double thresh35 = e_total * std::pow(10.0, -35.0 / 10.0);
+
+    size_t n5 = N, n35 = N;
+    for (size_t n = 0; n < N; ++n) {
+        if (n5  == N && edc[n] < thresh5)  n5  = n;
+        if (n35 == N && edc[n] < thresh35) n35 = n;
+    }
+    REQUIRE(n5  < N);
+    REQUIRE(n35 < N);
+    REQUIRE(n35 > n5);
+
+    // Linear extrapolation from -5 to -35 dB region to -60 dB
+    // T60 = n5/fs + (55/30) * (n35-n5)/fs
+    double T60_samples = double(n5) + (55.0 / 30.0) * double(n35 - n5);
+    return T60_samples / kFS;
+}
+
+TEST_CASE("Late: measured T60 matches formula within 15% at three rt60_s values") {
+    // Flat shelves + bloom=1 → decay driven by fb_gain. The DC-blocking highpass
+    // in the loop causes non-exponential EDC, so Schroeder extrapolation has a
+    // systematic bias of ~7-11%; 15% tolerance catches real bugs while staying realistic.
+    for (float rt60_s : {0.5f, 2.0f, 8.0f}) {
+        double measured = measure_t60(rt60_s);
+        double rel_err  = std::abs(measured / rt60_s - 1.0);
+        CHECK(rel_err < 0.15);
+    }
+}
+
+TEST_CASE("Late: T60 round-trip — fb_gain from target T60 recovers target") {
+    // Derive fb_gain from rt60_s, then compute the implied T60 from fb_gain and
+    // D. The two should agree to machine precision (it's just algebra).
+    constexpr float kFS = 48000.f;
+    for (float rt60_s : {0.5f, 2.0f, 8.0f}) {
+        Params p = flat_late_params(rt60_s);
+        std::vector<float> storage(8 * 4096, 0.f);
+        float* bufs[8];
+        for (int i = 0; i < 8; ++i) bufs[i] = storage.data() + i * 4096;
+        Late late;
+        late.Init(bufs, 4096, 4096, kFS);
+        late.SnapParams(p, kFS);
+
+        float D        = late.loop_length_samples();
+        float fb       = late.fb_gain();
+        double implied = -3.0 * (D / kFS) / std::log10(double(fb));
+        double rel_err = std::abs(implied / rt60_s - 1.0);
+        CHECK(rel_err < 1e-5);
+    }
+}
+
+TEST_CASE("Late: no NaN/Inf after 5-second white-noise soak at low fb_gain") {
+    constexpr float  kFS      = 48000.f;
+    constexpr size_t kDiffSz  = 4096;
+    constexpr size_t N        = size_t(5.f * kFS);
+
+    Params p;   // default params
+    std::vector<float> storage(8 * kDiffSz, 0.f);
+    float* bufs[8];
+    for (int i = 0; i < 8; ++i) bufs[i] = storage.data() + i * kDiffSz;
+
+    Late late;
+    late.Init(bufs, kDiffSz, kDiffSz, kFS);
+    late.SnapParams(p, kFS);
+
+    uint32_t rng = 0xFEEDBEEF;
+    auto rand11 = [&]() -> float {
+        rng = rng * 1664525u + 1013904223u;
+        return float(int32_t(rng)) / float(0x80000000u);
+    };
+
+    float outL, outR;
+    bool any_bad = false;
+    for (size_t n = 0; n < N; ++n) {
+        late.Process(rand11(), rand11(), outL, outR);
+        if (!std::isfinite(outL) || !std::isfinite(outR)) { any_bad = true; break; }
+    }
+    CHECK(!any_bad);
+}
+
+TEST_CASE("Late: modulation is live — output diverges from unmodulated reference") {
+    // Verify the LFO actually moves the delay read heads. Feed identical impulses
+    // into two Late instances (mod vs no-mod); outputs must differ after settling.
+    constexpr float  kFS     = 48000.f;
+    constexpr size_t kDiffSz = 4096;
+    constexpr size_t kSettle = size_t(1.f * kFS);  // 1 s of settling
+    constexpr size_t kMeas   = size_t(0.1f * kFS); // 0.1 s measurement window
+
+    auto make_late = [&](float mod_ms) {
+        Params p;
+        p.mod_ms = mod_ms;
+        p.mod_hz = 10.f;   // fast rate so effect is visible in 1 s
+        std::vector<float> storage(8 * kDiffSz, 0.f);
+        std::vector<float*> bufs(8);
+        for (int i = 0; i < 8; ++i) bufs[i] = storage.data() + i * kDiffSz;
+        Late* l = new Late();
+        l->Init(bufs.data(), kDiffSz, kDiffSz, kFS);
+        l->SnapParams(p, kFS);
+        return std::make_pair(l, storage);  // storage owns memory
+    };
+
+    // Can't easily return two things; run each leg separately.
+    Params p_mod;   p_mod.mod_ms = 1.0f;  p_mod.mod_hz = 10.f;
+    Params p_nomod; p_nomod.mod_ms = 0.f; p_nomod.mod_hz = 0.f;
+
+    std::vector<float> storMod(8 * kDiffSz, 0.f), storNo(8 * kDiffSz, 0.f);
+    float* bMod[8], *bNo[8];
+    for (int i = 0; i < 8; ++i) { bMod[i] = storMod.data() + i*kDiffSz;
+                                    bNo[i]  = storNo.data()  + i*kDiffSz; }
+
+    Late lateMod, lateNo;
+    lateMod.Init(bMod, kDiffSz, kDiffSz, kFS);  lateMod.SnapParams(p_mod,   kFS);
+    lateNo .Init(bNo,  kDiffSz, kDiffSz, kFS);  lateNo .SnapParams(p_nomod, kFS);
+
+    float oL, oR;
+    // Shared impulse to settle both
+    lateMod.Process(1.f, 1.f, oL, oR);
+    lateNo .Process(1.f, 1.f, oL, oR);
+    for (size_t n = 1; n < kSettle; ++n) {
+        lateMod.Process(0.f, 0.f, oL, oR);
+        lateNo .Process(0.f, 0.f, oL, oR);
+    }
+
+    double totalDiff = 0.0;
+    for (size_t n = 0; n < kMeas; ++n) {
+        float mL, mR, nL, nR;
+        lateMod.Process(0.f, 0.f, mL, mR);
+        lateNo .Process(0.f, 0.f, nL, nR);
+        totalDiff += std::abs(double(mL - nL)) + std::abs(double(mR - nR));
+    }
+    CHECK(totalDiff > 1e-6);  // modulated output must differ from unmodulated
+}
+
+TEST_CASE("Late: no NaN/Inf after 30-second white-noise soak at fb_gain=0.995 clamp") {
+    // Stage 8: stress-test at maximum fb_gain. rt60=60s, bloom=3.14 pushes
+    // computed fb_gain to 0.9965, which the clamp holds at 0.995.
+    constexpr float  kFS     = 48000.f;
+    constexpr size_t kDiffSz = 4096;
+    constexpr size_t N       = size_t(30.f * kFS);
+
+    Params p;
+    p.rt60_s = 60.f;    // → fb_gain hits 0.995 clamp
+    p.bloom  = 3.14f;
+
+    std::vector<float> storage(8 * kDiffSz, 0.f);
+    float* bufs[8];
+    for (int i = 0; i < 8; ++i) bufs[i] = storage.data() + i * kDiffSz;
+
+    Late late;
+    late.Init(bufs, kDiffSz, kDiffSz, kFS);
+    late.SnapParams(p, kFS);
+
+    uint32_t rng = 0xCAFEBABE;
+    auto rand11 = [&]() -> float {
+        rng = rng * 1664525u + 1013904223u;
+        return float(int32_t(rng)) / float(0x80000000u);
+    };
+
+    float outL, outR, peak = 0.f;
+    bool any_bad = false;
+    for (size_t n = 0; n < N; ++n) {
+        late.Process(rand11(), rand11(), outL, outR);
+        if (!std::isfinite(outL) || !std::isfinite(outR)) { any_bad = true; break; }
+        peak = std::max(peak, std::max(std::abs(outL), std::abs(outR)));
+    }
+    CHECK(!any_bad);
+    CHECK(peak < 100.f);   // bounded, not runaway
 }

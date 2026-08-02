@@ -11,6 +11,8 @@
 #include "dr_wav.h"
 
 #include "params.h"
+#include "early.h"
+#include "late.h"
 
 // ── params parsing ────────────────────────────────────────────────────────────
 
@@ -108,7 +110,30 @@ int main(int argc, char** argv) {
 
     const char* in_path     = gen_mode ? nullptr : pos[0];
     const char* params_path = gen_mode ? pos[0]  : pos[1];
-    const char* out_path    = gen_mode ? pos[1]  : pos[2];
+    const char* out_path_in = gen_mode ? pos[1]  : pos[2];
+
+    // Auto-number: if the requested output path already exists, insert _NNN before
+    // the extension so successive renders don't overwrite each other.
+    std::string out_owned;
+    const char* out_path;
+    {
+        std::string base(out_path_in);
+        if (std::ifstream(base).good()) {
+            auto dot = base.rfind('.');
+            std::string stem = (dot == std::string::npos) ? base : base.substr(0, dot);
+            std::string ext  = (dot == std::string::npos) ? ""   : base.substr(dot);
+            int n = 1;
+            do {
+                char buf[8];
+                std::snprintf(buf, sizeof(buf), "_%03d", n++);
+                out_owned = stem + buf + ext;
+            } while (std::ifstream(out_owned).good());
+            fprintf(stderr, "output: %s\n", out_owned.c_str());
+            out_path = out_owned.c_str();
+        } else {
+            out_path = out_path_in;
+        }
+    }
 
     // params are re-read on every invocation (no cache)
     const Params p = parse_params(params_path);
@@ -153,8 +178,53 @@ int main(int argc, char** argv) {
     R.resize(R.size() + tail_frames, 0.f);
     const size_t total = L.size();
 
-    // ── DSP (passthrough for stage 1) ─────────────────────────────────────────
-    std::vector<float> outL(L), outR(R);
+    // ── DSP ───────────────────────────────────────────────────────────────────
+    constexpr size_t kEarlyBuf = 8192;  // ~170 ms headroom at 48 kHz
+    constexpr size_t kDiffBuf  = 4096;
+    constexpr size_t kLongBuf  = 8192;
+
+    static float early_storage[8][kEarlyBuf];
+    static float diff_storage [6][kDiffBuf];
+    static float long_storage [2][kLongBuf];
+    memset(early_storage, 0, sizeof(early_storage));
+    memset(diff_storage,  0, sizeof(diff_storage));
+    memset(long_storage,  0, sizeof(long_storage));
+
+    float* early_bufs[8];
+    float* late_bufs[8];
+    for (int i = 0; i < 8; ++i) early_bufs[i] = early_storage[i];
+    for (int i = 0; i < 6; ++i) late_bufs[i]  = diff_storage[i];
+    late_bufs[6] = long_storage[0];
+    late_bufs[7] = long_storage[1];
+
+    Early early;
+    Late  late;
+    OutputShelf out_shelfL, out_shelfR;
+
+    early.Init(early_bufs, kEarlyBuf, kFS);
+    late .Init(late_bufs,  kDiffBuf, kLongBuf, kFS);
+    early.SnapParams(p, kFS);
+    late .SnapParams(p, kFS);
+
+    const float eo_hf = pitch_to_hz(p.eo_hf);
+    const float eo_hb = db_to_lin(p.eo_hb);
+    const float eo_lf = pitch_to_hz(p.eo_lf);
+    const float eo_lb = db_to_lin(p.eo_lb);
+    out_shelfL.SetParams(eo_hf, eo_hb, eo_lf, eo_lb, kFS);
+    out_shelfR.SetParams(eo_hf, eo_hb, eo_lf, eo_lb, kFS);
+
+    std::vector<float> outL(total), outR(total);
+    for (size_t i = 0; i < total; ++i) {
+        float eL, eR, ltL, ltR;
+        early.Process(L[i], R[i], eL, eR);
+        late .Process(eL,   eR,   ltL, ltR);
+        float wetL = (1.f - p.el_mix) * eL + p.el_mix * ltL;
+        float wetR = (1.f - p.el_mix) * eR + p.el_mix * ltR;
+        wetL = out_shelfL.Process(wetL);
+        wetR = out_shelfR.Process(wetR);
+        outL[i] = (1.f - p.dw_mix) * L[i] + p.dw_mix * wetL;
+        outR[i] = (1.f - p.dw_mix) * R[i] + p.dw_mix * wetR;
+    }
 
     // ── stats + write ─────────────────────────────────────────────────────────
     print_stats(outL.data(), outR.data(), total);

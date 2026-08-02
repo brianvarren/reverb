@@ -2,7 +2,7 @@
 # See core/params.h for full list; units in comments.
 
 predelay_ms = 40.0      # ms
-pd_sym      = 0.3       # semitones
+pd_sym      = 0.3       # ms (L gets -pd_sym, R gets +pd_sym)
 
 er_sz       = 30.0      # MIDI pitch
 er_sym      = 1.0       # semitones

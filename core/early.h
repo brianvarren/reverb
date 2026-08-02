@@ -24,6 +24,7 @@
 class Early {
 public:
     void Init(float* bufs[8], size_t buf_sz, float fs, size_t block_sz = 48) {
+        buf_sz_ = buf_sz;
         float blk_dt = float(block_sz) / fs;
         pd_[0].Init(bufs[0], buf_sz);
         pd_[1].Init(bufs[1], buf_sz);
@@ -36,8 +37,9 @@ public:
 
     // Snap all delays immediately — call after Init to avoid boot ramp.
     void SnapParams(const Params& p, float fs) {
-        const float pdL = (p.predelay_ms - p.pd_sym) * fs * 0.001f;
-        const float pdR = (p.predelay_ms + p.pd_sym) * fs * 0.001f;
+        const float max_pd = float(buf_sz_) - 1.f;
+        const float pdL = clampf((p.predelay_ms - p.pd_sym) * fs * 0.001f, 1.f, max_pd);
+        const float pdR = clampf((p.predelay_ms + p.pd_sym) * fs * 0.001f, 1.f, max_pd);
         pd_sm_[0].Reset(pdL);  pd_d_[0] = pdL;
         pd_sm_[1].Reset(pdR);  pd_d_[1] = pdR;
         _apply_params(p, fs, /*snap=*/true);
@@ -45,8 +47,9 @@ public:
 
     // Advance smoothers by one block — call once per control block.
     void UpdateBlock(const Params& p, float fs) {
-        const float pdL = (p.predelay_ms - p.pd_sym) * fs * 0.001f;
-        const float pdR = (p.predelay_ms + p.pd_sym) * fs * 0.001f;
+        const float max_pd = float(buf_sz_) - 1.f;
+        const float pdL = clampf((p.predelay_ms - p.pd_sym) * fs * 0.001f, 1.f, max_pd);
+        const float pdR = clampf((p.predelay_ms + p.pd_sym) * fs * 0.001f, 1.f, max_pd);
         pd_d_[0] = pd_sm_[0].Process(pdL);
         pd_d_[1] = pd_sm_[1].Process(pdR);
         _apply_params(p, fs, /*snap=*/false);
@@ -101,6 +104,7 @@ private:
             chain_[ch].SetParams(hf, hb, lf, lb, fs);
     }
 
+    size_t      buf_sz_ = 0;
     DelayLine   pd_[2];
     Smoother    pd_sm_[2];
     float       pd_d_[2] = {};

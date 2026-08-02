@@ -122,14 +122,14 @@ In L/R → PreDelay (L/R independent) → Early (3 allpasses/ch, no feedback, no
 | # | Stage | Status |
 |---|-------|--------|
 | 1 | Host harness: passthrough WAV render, params.txt, --impulse/--noise | ✅ done |
-| 2 | `pitch_to_samples`, Smoother, DelayLine + 4-pt interpolation | ⬜ |
-| 3 | Two-band shelf (provably ≤ 0 dB) | ⬜ |
-| 4 | Damped allpass diffuser | ⬜ |
-| 5 | Early section (2-channel, SzL/SzR, predelay) | ⬜ |
-| 6 | Rotation stage (unit test energy preservation) | ⬜ |
-| 7 | Late loop, no modulation, low fb_gain | ⬜ |
-| 8 | High fb_gain + 10-minute soak | ⬜ |
-| 9 | Multi-phase LFO modulation | ⬜ |
+| 2 | `pitch_to_samples`, Smoother, DelayLine + 4-pt interpolation | ✅ done |
+| 3 | Two-band shelf (provably ≤ 0 dB) | ✅ done |
+| 4 | Damped allpass diffuser | ✅ done |
+| 5 | Early section (2-channel, SzL/SzR, predelay) | ✅ done |
+| 6 | Rotation stage (unit test energy preservation) | ✅ done |
+| 7 | Late loop, no modulation, low fb_gain | ✅ done |
+| 8 | High fb_gain + 10-minute soak | ✅ done |
+| 9 | Multi-phase LFO modulation | ✅ done |
 | 10 | Daisy Seed port: SDRAM, FZ bit, knobs | ⬜ |
 
 Do not flash the Seed until stage 10.

@@ -23,6 +23,8 @@ struct Shelf {
         if constexpr (kLoopSafe) {
             assert(hb_lin <= 1.f && "in-loop high shelf: gain must be <= 0 dB");
             assert(lb_lin <= 1.f && "in-loop low shelf:  gain must be <= 0 dB");
+            hb_lin = fminf(hb_lin, 1.f);
+            lb_lin = fminf(lb_lin, 1.f);
         }
         hb_ = hb_lin;
         lb_ = lb_lin;
@@ -35,9 +37,9 @@ struct Shelf {
         // Shape: A + (1-A)*LP  →  |H| <= 1 for A <= 1  (triangle inequality)
         x = hb_ * x + (1.f - hb_) * lp_h_.LP(x);
         // Low shelf: gain lb_ at DC, unity at Nyquist.
-        // Shape: A*LP + (1-A)*HP  →  |H| <= 1 for A <= 1
+        // Shape: A*LP + HP = 1 - (1-A)*LP  →  |H| <= 1 for A <= 1 (proved via |F|² <= Re(F))
         float l = lp_l_.LP(x);
-        return lb_ * l + (1.f - lb_) * (x - l);
+        return lb_ * l + (x - l);
     }
 
     void Reset() { lp_h_.Reset(); lp_l_.Reset(); }
