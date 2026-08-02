@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <new>
@@ -80,6 +81,9 @@ public:
     float t60()      const { return t60_.load(std::memory_order_relaxed); }
     float edt()      const { return edt_.load(std::memory_order_relaxed); }
     int   blowups()  const { return blowups_.load(std::memory_order_relaxed); }
+    // Exponential moving average of (render time / frame budget). >1.0 = overrun.
+    float cpu_load() const { return cpu_load_.load(std::memory_order_relaxed); }
+    int   overruns() const { return overruns_.load(std::memory_order_relaxed); }
     // 0..1 while a decay capture is running, −1 when idle.
     float capture_progress() const {
         const int  st = cap_state_.load(std::memory_order_relaxed);
@@ -154,6 +158,8 @@ public:
     // ── audio thread ─────────────────────────────────────────────────────────
 
     void Render(float* out, size_t frames) {
+        using clk = std::chrono::steady_clock;
+        const auto t0 = clk::now();
         _denormals_off();
 
         size_t done = 0;
@@ -225,6 +231,12 @@ public:
 
             done += n;
         }
+        const float elapsed = std::chrono::duration<float>(clk::now() - t0).count();
+        const float budget  = float(frames) / fs_;
+        const float load    = elapsed / budget;
+        const float prev    = cpu_load_.load(std::memory_order_relaxed);
+        cpu_load_.store(prev + 0.1f * (load - prev), std::memory_order_relaxed);
+        if (load >= 1.f) overruns_.fetch_add(1, std::memory_order_relaxed);
     }
 
 private:
@@ -364,6 +376,8 @@ private:
     std::atomic<float> peak_{0.f}, rms_{0.f}, t60_{-1.f}, edt_{-1.f};
     std::atomic<int>   blowups_{0};
     int                blowups_local_ = 0;
+    std::atomic<float> cpu_load_{0.f};
+    std::atomic<int>   overruns_{0};
 
     std::atomic<float> hist_[kHistLen];
     std::atomic<int>   hist_w_{0};

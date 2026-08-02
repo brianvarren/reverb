@@ -327,12 +327,14 @@ int main(int argc, char** argv) {
     const char* wav_path    = nullptr;
     int         dev_index   = -1;
     ma_uint32   period      = 256;
+    ma_uint32   rate        = 48000;
     bool        list_only   = false;
 
     for (int i = 1; i < argc; ++i) {
         if      (!strcmp(argv[i], "--in")     && i+1 < argc) wav_path  = argv[++i];
         else if (!strcmp(argv[i], "--device") && i+1 < argc) dev_index = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--period") && i+1 < argc) period    = (ma_uint32)atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--rate")   && i+1 < argc) rate      = (ma_uint32)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--list-devices"))         list_only = true;
         else if (argv[i][0] != '-')                          params_path = argv[i];
     }
@@ -358,7 +360,7 @@ int main(int argc, char** argv) {
     bool ok = false;
     const Params p0 = load_params(params_path, &ok);
 
-    g_eng.Init(48000.f, p0);
+    g_eng.Init(float(rate), p0);
     Ui ui;
     build_rows(ui);
 
@@ -371,7 +373,7 @@ int main(int argc, char** argv) {
     ma_device_config cfg   = ma_device_config_init(ma_device_type_playback);
     cfg.playback.format    = ma_format_f32;
     cfg.playback.channels  = 2;
-    cfg.sampleRate         = 48000;
+    cfg.sampleRate         = rate;
     cfg.periodSizeInFrames = period;
     cfg.dataCallback       = audio_cb;
     cfg.pUserData          = &g_eng;
@@ -434,6 +436,41 @@ int main(int argc, char** argv) {
     };
     push_ui();
 
+    // ── audio restart ─────────────────────────────────────────────────────────
+    // Stops the device, optionally reinitialises the DSP (required on rate
+    // change because pitch_to_samples and smoother coefficients use fs), then
+    // starts a new device with the current rate/period values.
+    // Period-only changes preserve the reverb tail; rate changes clear it.
+    static const ma_uint32 kRates[]  = { 44100, 48000, 88200, 96000 };
+    static const int       kNRates   = 4;
+
+    auto restart_audio = [&](bool reinit_dsp) {
+        ma_device_stop(&dev);
+        ma_device_uninit(&dev);
+        if (reinit_dsp) {
+            Params cur;
+            for (int i = 0; i < kParamCount; ++i)
+                *ParamSlot(cur, i) = g_eng.GetParam(i);
+            g_eng.Init(float(rate), cur);
+            push_ui();
+        }
+        ma_device_config cfg2 = ma_device_config_init(ma_device_type_playback);
+        cfg2.playback.format    = ma_format_f32;
+        cfg2.playback.channels  = 2;
+        cfg2.sampleRate         = rate;
+        cfg2.periodSizeInFrames = period;
+        cfg2.dataCallback       = audio_cb;
+        cfg2.pUserData          = &g_eng;
+        if (!silent && dev_index >= 0 && (ma_uint32)dev_index < play_n)
+            cfg2.playback.pDeviceID = &play_info[dev_index].id;
+        if (ma_device_init(&ctx, &cfg2, &dev) != MA_SUCCESS ||
+            ma_device_start(&dev) != MA_SUCCESS) {
+            snprintf(msg, sizeof msg, "audio restart failed");
+        } else {
+            snprintf(msg, sizeof msg, "audio: %u Hz / %u frames", dev.sampleRate, period);
+        }
+    };
+
     while (running) {
         push_ui();
         g_eng.AnalyseDecay();
@@ -467,14 +504,35 @@ int main(int argc, char** argv) {
         erase();
 
         // ── title ────────────────────────────────────────────────────────────
-        attron(A_BOLD);
-        mvprintw(0, 1, "verb tuner  ·  48 kHz  ·  %u-frame periods  ·  %s",
-                 period, dev.playback.name);
-        attroff(A_BOLD);
-        if (silent) {
-            attron(COLOR_PAIR(kColWarn) | A_BOLD);
-            mvprintw(0, COLS - 22, " NO AUDIO DEVICE ");
-            attroff(COLOR_PAIR(kColWarn) | A_BOLD);
+        {
+            const float cpu = g_eng.cpu_load() * 100.f;
+            const int   ovr = g_eng.overruns();
+            attron(A_BOLD);
+            mvprintw(0, 1, "verb tuner  ·  %u Hz  ·  %u fr  ·  CPU %.0f%%  ·  %s",
+                     rate, period, cpu, dev.playback.name);
+            attroff(A_BOLD);
+            // Rate mismatch: driver gave us something different from what we asked for.
+            if (!silent && dev.sampleRate != rate) {
+                attron(COLOR_PAIR(kColWarn) | A_BOLD);
+                char wb[48];
+                snprintf(wb, sizeof wb, " RATE MISMATCH: got %u Hz ", dev.sampleRate);
+                mvprintw(0, COLS - (int)strlen(wb), "%s", wb);
+                attroff(COLOR_PAIR(kColWarn) | A_BOLD);
+            } else if (silent) {
+                attron(COLOR_PAIR(kColWarn) | A_BOLD);
+                mvprintw(0, COLS - 20, " NO AUDIO DEVICE ");
+                attroff(COLOR_PAIR(kColWarn) | A_BOLD);
+            } else if (ovr > 0) {
+                attron(COLOR_PAIR(kColWarn) | A_BOLD);
+                char wb[32];
+                snprintf(wb, sizeof wb, " %d overrun%s ", ovr, ovr == 1 ? "" : "s");
+                mvprintw(0, COLS - (int)strlen(wb), "%s", wb);
+                attroff(COLOR_PAIR(kColWarn) | A_BOLD);
+            } else if (cpu > 80.f) {
+                attron(COLOR_PAIR(kColWarn));
+                mvprintw(0, COLS - 10, " CPU HIGH ");
+                attroff(COLOR_PAIR(kColWarn));
+            }
         }
 
         // ── params ───────────────────────────────────────────────────────────
@@ -495,7 +553,7 @@ int main(int argc, char** argv) {
         // ── derived engineering readout ──────────────────────────────────────
         // Mirrors the arithmetic in core/early.h and core/late.h so you can see
         // what a pitch value actually means in milliseconds before you commit.
-        const float fs = 48000.f;
+        const float fs = float(dev.sampleRate);
         char line[512];
         {
             const float erL = g_eng.GetParam(kP_er_sz) - g_eng.GetParam(kP_er_sym);
@@ -620,7 +678,7 @@ int main(int argc, char** argv) {
                  "Enter type value   Del reset");
         put(y++, "SPACE trigger   a w s e d f t g y h u j k = play   z/x octave   1-4 signal   "
                  "r repeat");
-        put(y++, "c clear   m mute   b bypass   i file   v A/B   F2 save   F3 reload   q quit");
+        put(y++, "c clear   m mute   b bypass   i file   v A/B   F2 save   F3 reload   F4 rate   [ ] period   q quit");
         attroff(COLOR_PAIR(kColDim));
 
         refresh();
@@ -717,6 +775,22 @@ int main(int argc, char** argv) {
                         g_eng.SetParam(i, ParamTable()[i].def);
                     snprintf(msg, sizeof msg, "defaults restored");
                     break;
+
+                case '[':   // halve period
+                    if (period > 64) { period /= 2; restart_audio(false); }
+                    break;
+                case ']':   // double period
+                    if (period < 4096) { period *= 2; restart_audio(false); }
+                    break;
+
+                case KEY_F(4): {  // cycle sample rate (reinits DSP)
+                    int idx = 0;
+                    for (int i = 0; i < kNRates; ++i)
+                        if (kRates[i] == rate) { idx = i; break; }
+                    rate = kRates[(idx + 1) % kNRates];
+                    restart_audio(true);
+                    break;
+                }
 
                 default: handled = false; break;
             }
