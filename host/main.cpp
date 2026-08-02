@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -10,36 +11,16 @@
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
 
-#include "params.h"
-#include "early.h"
-#include "late.h"
+#include "reverb.h"
 
 // ── params parsing ────────────────────────────────────────────────────────────
 
 static void apply_param(Params& p, const std::string& key, float val) {
-    if      (key == "predelay_ms") p.predelay_ms = val;
-    else if (key == "pd_sym")      p.pd_sym      = val;
-    else if (key == "er_sz")       p.er_sz       = val;
-    else if (key == "er_sym")      p.er_sym      = val;
-    else if (key == "er_dffs")     p.er_dffs     = val;
-    else if (key == "lt_sz")       p.lt_sz       = val;
-    else if (key == "lt_sym")      p.lt_sym      = val;
-    else if (key == "lt_theta")    p.lt_theta    = val;
-    else if (key == "rt60_s")      p.rt60_s      = val;
-    else if (key == "bloom")       p.bloom       = val;
-    else if (key == "mod_ms")      p.mod_ms      = val;
-    else if (key == "mod_hz")      p.mod_hz      = val;
-    else if (key == "dmp_hf")      p.dmp_hf      = val;
-    else if (key == "dmp_hb")      p.dmp_hb      = val;
-    else if (key == "dmp_lf")      p.dmp_lf      = val;
-    else if (key == "dmp_lb")      p.dmp_lb      = val;
-    else if (key == "eo_hf")       p.eo_hf       = val;
-    else if (key == "eo_hb")       p.eo_hb       = val;
-    else if (key == "eo_lf")       p.eo_lf       = val;
-    else if (key == "eo_lb")       p.eo_lb       = val;
-    else if (key == "el_mix")      p.el_mix      = val;
-    else if (key == "dw_mix")      p.dw_mix      = val;
-    else fprintf(stderr, "warning: unknown param '%s'\n", key.c_str());
+    const ParamDesc* t = ParamTable();
+    for (int i = 0; i < kParamCount; ++i) {
+        if (key == t[i].key) { *ParamSlot(p, i) = val; return; }
+    }
+    fprintf(stderr, "warning: unknown param '%s'\n", key.c_str());
 }
 
 static Params parse_params(const char* path) {
@@ -67,7 +48,22 @@ static Params parse_params(const char* path) {
         try { apply_param(p, key, std::stof(val_str)); }
         catch (...) { fprintf(stderr, "warning: bad value for '%s'\n", key.c_str()); }
     }
+    int nc = ParamsClamp(p);
+    if (nc > 0) fprintf(stderr, "warning: %d param(s) clamped to range\n", nc);
     return p;
+}
+
+static void dump_params(const Params& p) {
+    const ParamDesc* t = ParamTable();
+    fprintf(stderr, "%-16s  %8s  %8s  %8s  %8s  %s\n",
+            "key", "value", "lo", "hi", "default", "label");
+    fprintf(stderr, "%-16s  %8s  %8s  %8s  %8s\n",
+            "----------------", "--------", "--------", "--------", "--------");
+    for (int i = 0; i < kParamCount; ++i) {
+        fprintf(stderr, "%-16s  %8.4f  %8.4f  %8.4f  %8.4f  %s [%s]\n",
+                t[i].key, *ParamSlot(const_cast<Params&>(p), i),
+                t[i].lo, t[i].hi, t[i].def, t[i].label, t[i].unit);
+    }
 }
 
 // ── stats ─────────────────────────────────────────────────────────────────────
@@ -90,11 +86,13 @@ static void print_stats(const float* L, const float* R, size_t n) {
 int main(int argc, char** argv) {
     float impulse_secs = -1.f;
     float noise_secs   = -1.f;
+    bool  do_dump      = false;
     std::vector<const char*> pos;
 
     for (int i = 1; i < argc; ++i) {
         if      (std::strcmp(argv[i], "--impulse") == 0 && i+1 < argc) impulse_secs = std::stof(argv[++i]);
         else if (std::strcmp(argv[i], "--noise")   == 0 && i+1 < argc) noise_secs   = std::stof(argv[++i]);
+        else if (std::strcmp(argv[i], "--dump-params") == 0)           do_dump      = true;
         else pos.push_back(argv[i]);
     }
 
@@ -104,7 +102,8 @@ int main(int argc, char** argv) {
         fprintf(stderr,
             "usage: verb in.wav params.txt out.wav\n"
             "       verb --impulse N params.txt out.wav\n"
-            "       verb --noise N params.txt out.wav\n");
+            "       verb --noise N params.txt out.wav\n"
+            "       add --dump-params to print the parameter table\n");
         return 1;
     }
 
@@ -112,8 +111,7 @@ int main(int argc, char** argv) {
     const char* params_path = gen_mode ? pos[0]  : pos[1];
     const char* out_path_in = gen_mode ? pos[1]  : pos[2];
 
-    // Auto-number: if the requested output path already exists, insert _NNN before
-    // the extension so successive renders don't overwrite each other.
+    // Auto-number output: if the file exists, insert _NNN before the extension.
     std::string out_owned;
     const char* out_path;
     {
@@ -135,8 +133,8 @@ int main(int argc, char** argv) {
         }
     }
 
-    // params are re-read on every invocation (no cache)
     const Params p = parse_params(params_path);
+    if (do_dump) dump_params(p);
 
     constexpr float kFS = 48000.f;
     const size_t tail_frames = (size_t)std::ceil(p.rt60_s * p.bloom * 1.5f * kFS);
@@ -173,13 +171,12 @@ int main(int argc, char** argv) {
         }
     }
 
-    // append tail silence so the decay is fully captured
     L.resize(L.size() + tail_frames, 0.f);
     R.resize(R.size() + tail_frames, 0.f);
     const size_t total = L.size();
 
     // ── DSP ───────────────────────────────────────────────────────────────────
-    constexpr size_t kEarlyBuf = 8192;  // ~170 ms headroom at 48 kHz
+    constexpr size_t kEarlyBuf = 8192;   // ~170 ms at 48 kHz
     constexpr size_t kDiffBuf  = 4096;
     constexpr size_t kLongBuf  = 8192;
 
@@ -190,41 +187,19 @@ int main(int argc, char** argv) {
     memset(diff_storage,  0, sizeof(diff_storage));
     memset(long_storage,  0, sizeof(long_storage));
 
-    float* early_bufs[8];
-    float* late_bufs[8];
-    for (int i = 0; i < 8; ++i) early_bufs[i] = early_storage[i];
-    for (int i = 0; i < 6; ++i) late_bufs[i]  = diff_storage[i];
-    late_bufs[6] = long_storage[0];
-    late_bufs[7] = long_storage[1];
+    float* bufs[16];
+    for (int i = 0; i < 8; ++i) bufs[i]     = early_storage[i];
+    for (int i = 0; i < 6; ++i) bufs[8 + i] = diff_storage[i];
+    bufs[14] = long_storage[0];
+    bufs[15] = long_storage[1];
 
-    Early early;
-    Late  late;
-    OutputShelf out_shelfL, out_shelfR;
-
-    early.Init(early_bufs, kEarlyBuf, kFS);
-    late .Init(late_bufs,  kDiffBuf, kLongBuf, kFS);
-    early.SnapParams(p, kFS);
-    late .SnapParams(p, kFS);
-
-    const float eo_hf = pitch_to_hz(p.eo_hf);
-    const float eo_hb = db_to_lin(p.eo_hb);
-    const float eo_lf = pitch_to_hz(p.eo_lf);
-    const float eo_lb = db_to_lin(p.eo_lb);
-    out_shelfL.SetParams(eo_hf, eo_hb, eo_lf, eo_lb, kFS);
-    out_shelfR.SetParams(eo_hf, eo_hb, eo_lf, eo_lb, kFS);
+    Reverb reverb;
+    reverb.Init(bufs, kEarlyBuf, kDiffBuf, kLongBuf, kFS);
+    reverb.SnapParams(p);
 
     std::vector<float> outL(total), outR(total);
-    for (size_t i = 0; i < total; ++i) {
-        float eL, eR, ltL, ltR;
-        early.Process(L[i], R[i], eL, eR);
-        late .Process(eL,   eR,   ltL, ltR);
-        float wetL = (1.f - p.el_mix) * eL + p.el_mix * ltL;
-        float wetR = (1.f - p.el_mix) * eR + p.el_mix * ltR;
-        wetL = out_shelfL.Process(wetL);
-        wetR = out_shelfR.Process(wetR);
-        outL[i] = (1.f - p.dw_mix) * L[i] + p.dw_mix * wetL;
-        outR[i] = (1.f - p.dw_mix) * R[i] + p.dw_mix * wetR;
-    }
+    for (size_t i = 0; i < total; ++i)
+        reverb.Process(L[i], R[i], outL[i], outR[i]);
 
     // ── stats + write ─────────────────────────────────────────────────────────
     print_stats(outL.data(), outR.data(), total);

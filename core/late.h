@@ -67,13 +67,14 @@ public:
         _update_shelves(p, fs);
         _update_fb(fs, p.rt60_s, p.bloom);
         _update_lfo(p, fs);
-        _step_lfo();  // advance once per block when UpdateBlock drives the loop
+        _step_lfo();
+        block_lfo_ = true;
     }
 
     void Process(float eL, float eR, float& outL, float& outR) {
-        // When no block driver calls UpdateBlock, advance LFO per sample.
-        // Cost is 8 sinf/sample on the host; the Daisy port moves this to UpdateBlock.
-        if (lfo_inc_ > 0.f) _step_lfo();
+        // Host path: no UpdateBlock caller, so advance LFO per sample.
+        // Firmware calls UpdateBlock once per block, so Process must not re-advance.
+        if (!block_lfo_) _step_lfo();
 
         float aL = eL + fbR_;
         float aR = eR + fbL_;
@@ -163,4 +164,5 @@ private:
     float        fb_gain_ = 0.5f;
     float        lfo_phase_ = 0.f, lfo_inc_ = 0.f, lfo_depth_ = 0.f;
     float        mod_[8] = {};
+    bool         block_lfo_ = false;
 };

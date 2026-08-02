@@ -10,7 +10,7 @@ er_dffs     = 0.68      # allpass coefficient [0.5, 0.8]
 
 lt_sz       = 24.0      # MIDI pitch
 lt_sym      = 1.2       # semitones
-lt_theta    = 0.7854    # rotation angle (pi/4 = full scatter)
+lt_theta    = 0.7853982 # rotation angle (pi/4 = full scatter)
 
 rt60_s      = 4.0       # seconds
 bloom       = 3.14      # RT60 multiplier (see §6.3 in plan)
