@@ -68,14 +68,26 @@ public:
         _update_shelves(p, fs);
         _update_fb(fs, p.rt60_s, p.bloom);
         _update_lfo(p, fs);
+        // Compute per-sample mod increments so Process() interpolates smoothly
+        // across the block rather than holding frozen values (staircase artifact).
+        float mod_start[8];
+        for (int k = 0; k < 8; ++k) mod_start[k] = mod_[k];
         _step_lfo(block_sz_);
+        for (int k = 0; k < 8; ++k) {
+            mod_inc_[k] = (mod_[k] - mod_start[k]) / block_sz_;
+            mod_[k]     = mod_start[k];
+        }
         block_lfo_ = true;
     }
 
     void Process(float eL, float eR, float& outL, float& outR) {
-        // Host path: no UpdateBlock caller, so advance LFO per sample.
-        // Firmware calls UpdateBlock once per block, so Process must not re-advance.
-        if (!block_lfo_) _step_lfo(1.f);
+        if (!block_lfo_) {
+            // Host per-sample path: advance LFO every sample, no interpolation needed.
+            _step_lfo(1.f);
+        } else {
+            // Block path: advance mod by precomputed per-sample increment.
+            for (int k = 0; k < 8; ++k) mod_[k] += mod_inc_[k];
+        }
 
         float aL = eL + fbR_;
         float aR = eR + fbL_;
@@ -170,6 +182,7 @@ private:
     float        fb_gain_ = 0.5f;
     float        lfo_phase_ = 0.f, lfo_inc_ = 0.f, lfo_depth_ = 0.f;
     float        block_sz_  = 48.f;
-    float        mod_[8] = {};
-    bool         block_lfo_ = false;
+    float        mod_[8]     = {};
+    float        mod_inc_[8] = {};
+    bool         block_lfo_  = false;
 };
