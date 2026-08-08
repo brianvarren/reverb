@@ -133,7 +133,8 @@ int main(int argc, char** argv) {
         }
     }
 
-    const Params p = parse_params(params_path);
+    Params p = parse_params(params_path);
+    p.Derive();
     if (do_dump) dump_params(p);
 
     constexpr float kFS = 48000.f;
@@ -176,25 +177,30 @@ int main(int argc, char** argv) {
     const size_t total = L.size();
 
     // ── DSP ───────────────────────────────────────────────────────────────────
-    constexpr size_t kEarlyBuf = 8192;   // ~170 ms at 48 kHz
-    constexpr size_t kDiffBuf  = 4096;
-    constexpr size_t kLongBuf  = 8192;
+    constexpr size_t kEarlyBuf  = 8192;   // ~170 ms at 48 kHz
+    constexpr size_t kDiffBuf   = 4096;
+    constexpr size_t kLongBuf   = 8192;
+    constexpr size_t kInjectBuf = 4096;   // injection allpass; covers lt_sz full range
 
     static float early_storage[8][kEarlyBuf];
     static float diff_storage [6][kDiffBuf];
     static float long_storage [2][kLongBuf];
+    static float inj_storage  [2][kInjectBuf];
     memset(early_storage, 0, sizeof(early_storage));
     memset(diff_storage,  0, sizeof(diff_storage));
     memset(long_storage,  0, sizeof(long_storage));
+    memset(inj_storage,   0, sizeof(inj_storage));
 
-    float* bufs[16];
+    float* bufs[18];
     for (int i = 0; i < 8; ++i) bufs[i]     = early_storage[i];
     for (int i = 0; i < 6; ++i) bufs[8 + i] = diff_storage[i];
     bufs[14] = long_storage[0];
     bufs[15] = long_storage[1];
+    bufs[16] = inj_storage[0];
+    bufs[17] = inj_storage[1];
 
     Reverb reverb;
-    reverb.Init(bufs, kEarlyBuf, kDiffBuf, kLongBuf, kFS);
+    reverb.Init(bufs, kEarlyBuf, kDiffBuf, kLongBuf, kInjectBuf, kFS);
     reverb.SnapParams(p);
 
     std::vector<float> outL(total), outR(total);

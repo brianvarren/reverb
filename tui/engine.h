@@ -38,6 +38,7 @@ public:
     static constexpr size_t kEarlyBuf  = 16384;   // 341 ms predelay ceiling
     static constexpr size_t kDiffBuf   = 8192;
     static constexpr size_t kLongBuf   = 16384;
+    static constexpr size_t kInjectBuf = 4096;    // injection allpass; covers lt_sz full range
     static constexpr int    kHistLen   = 240;     // tail graph, one cell per hop
     static constexpr int    kHistHop   = 20;      // blocks per cell → 20 ms/cell
 
@@ -172,6 +173,7 @@ public:
             Params p;
             for (int i = 0; i < kParamCount; ++i)
                 *ParamSlot(p, i) = ap_[i].load(std::memory_order_relaxed);
+            p.Derive();
             reverb_.UpdateBlock(p);
 
             const uint32_t t = trig_.load(std::memory_order_acquire);
@@ -250,7 +252,7 @@ private:
         // Arm the decay capture. It starts for real once the excitation has
         // finished, so the measurement describes the reverb and not the burst.
         if (!cap_ready_.load(std::memory_order_acquire)) {
-            const float rt = ap_[kP_rt60_s].load(std::memory_order_relaxed);
+            const float rt = fmaxf(ap_[kP_size].load(std::memory_order_relaxed) * 120.f, 0.05f);
             const float bl = ap_[kP_bloom ].load(std::memory_order_relaxed);
             long want = long((rt * bl * 1.3f + 0.5f) * fs_ / float(kBlock));
             if (want > kCapMax) want = kCapMax;
@@ -267,20 +269,24 @@ private:
         memset(early_, 0, sizeof(early_));
         memset(diff_,  0, sizeof(diff_));
         memset(long_,  0, sizeof(long_));
+        memset(inj_,   0, sizeof(inj_));
 
-        float* bufs[16];
+        float* bufs[18];
         for (int i = 0; i < 8; ++i) bufs[i]     = early_[i];
         for (int i = 0; i < 6; ++i) bufs[8 + i] = diff_[i];
         bufs[14] = long_[0];
         bufs[15] = long_[1];
+        bufs[16] = inj_[0];
+        bufs[17] = inj_[1];
 
         reverb_.~Reverb();
         new (&reverb_) Reverb();
-        reverb_.Init(bufs, kEarlyBuf, kDiffBuf, kLongBuf, fs_, kBlock);
+        reverb_.Init(bufs, kEarlyBuf, kDiffBuf, kLongBuf, kInjectBuf, fs_, kBlock);
 
         Params p;
         for (int i = 0; i < kParamCount; ++i)
             *ParamSlot(p, i) = ap_[i].load(std::memory_order_relaxed);
+        p.Derive();
         reverb_.SnapParams(p);
 
         gen_.Stop();
@@ -348,6 +354,7 @@ private:
     float  early_[8][kEarlyBuf];
     float  diff_ [6][kDiffBuf];
     float  long_ [2][kLongBuf];
+    float  inj_  [2][kInjectBuf];
 
     TestGen gen_;
     std::vector<float> file_;      // interleaved stereo
