@@ -30,66 +30,71 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
 
 #define VERB_PARAM_LIST(X)                                                     \
                                                                                \
-    /* ── SIZE ───────────────────────────────────────────────────────────── */ \
-    /* Single macro that derives all geometry: predelay, early size,         */ \
-    /* late size, RT60, mod rate/depth.  Call Params::Derive() after change. */ \
-    /* Character zones:                                                      */ \
-    /*   0.00–0.05: slap/chamber   0.05–0.25: room/hall                     */ \
-    /*   0.25–0.6:  large/cave     0.6–1.0:   vast drone / near-infinite    */ \
-    X(size,    "size",    0.033f, 0.f, 1.f, kLin, "",   "Size"          ) \
+    /* ── PREDELAY ───────────────────────────────────────────────────────── */ \
+    /* predelay_ms  [0.5 – 300 ms, exponential]                              */ \
+    X(predelay_ms,"predelay_ms", 10.f,  0.5f, 300.f, kExp, "ms", "Pre-delay"      ) \
                                                                                \
-    /* ── PREDELAY STEREO ────────────────────────────────────────────────── */ \
     /* pd_sym  [0 – 100 ms², squared]                                        */ \
     /* Offsets L and R predelay by ±pd_sym:                                  */ \
     /*   T_L = predelay_ms − pd_sym,  T_R = predelay_ms + pd_sym            */ \
     /* Squared mapping keeps the useful 0–5 ms range in the bottom half.     */ \
-    /* Above ~8 ms the two channels start to feel like separate reverbs.     */ \
-    X(pd_sym,  "pd_sym",  0.3f,  0.f, 100.f, kSq,  "ms", "Pre-delay spread") \
+    X(pd_sym,     "pd_sym",      0.3f,  0.f,  100.f, kSq,  "ms", "Pre-delay spread") \
                                                                                \
-    /* ── LATE SECTION ───────────────────────────────────────────────────── */ \
+    /* ── EARLY ──────────────────────────────────────────────────────────── */ \
+    /* er_sz  [12 – 66 semi, linear in pitch]                                */ \
+    /* Base pitch of the three early allpass stages.  Lower = longer taps.  */ \
+    X(er_sz,      "er_sz",      58.6f, 12.f,  66.f, kLin, "semi", "Early size"    ) \
+                                                                               \
+    /* er_sym  [0 – 6 semi, linear]                                          */ \
+    /* L/R pitch offset: szL = er_sz − er_sym, szR = er_sz + er_sym.        */ \
+    X(er_sym,     "er_sym",      2.0f,  0.f,   6.f, kLin, "semi", "Early spread"  ) \
+                                                                               \
+    /* er_dffs  [0 – 0.95, linear]                                           */ \
+    /* Allpass coefficient for the early diffusion stages.                   */ \
+    /* 0 = bypass (pure tapped delay), 0.95 = maximum smear.                */ \
+    X(er_dffs,    "er_dffs",     0.5f,  0.f,  0.95f, kLin, "",    "Early diffusion") \
+                                                                               \
+    /* ── LATE ───────────────────────────────────────────────────────────── */ \
     /* lt_sz  [−24 – 48 semi, linear in pitch]                               */ \
     /* Base pitch of the late loop delay lines.  Lower pitch = longer delays.*/ \
-    /* 48 → ~370 samples (chamber).  −24 → ~27k samples (vast drone).       */ \
-    /* Derived from Size via 48 − (S × 0.72); expose as a knob to decouple  */ \
-    /* room size from decay time when needed.                                */ \
-    X(lt_sz,   "lt_sz",   45.6f, -24.f, 48.f, kLin, "semi", "Late size"   ) \
+    /* 24 → ~96 ms loop.  6 → ~350 ms loop.  −24 → ~2 s loop.              */ \
+    X(lt_sz,      "lt_sz",      24.0f,-24.f,  48.f, kLin, "semi", "Late size"     ) \
                                                                                \
     /* lt_theta  [0 – π/4 rad, linear]                                       */ \
     /* Rotation angle in the 2×2 orthogonal diffuser before each delay read. */ \
-    /* θ = 0: identity — echoes, no diffusion.                               */ \
-    /* θ = π/4: max mixing — smooth, dense tail.                             */ \
-    /* Lower = more articulate and echo-y; higher = more wash.               */ \
-    X(lt_theta,"lt_theta",0.7853982f, 0.f, 0.7853982f, kLin, "rad", "Late scatter") \
+    /* θ = 0: no within-stage mixing.  θ = π/4: maximum cross-diffusion.    */ \
+    X(lt_theta,   "lt_theta",    0.7853982f, 0.f, 0.7853982f, kLin, "rad", "Late scatter") \
                                                                                \
     /* ── DECAY ──────────────────────────────────────────────────────────── */ \
+    /* rt60_s  [0.05 – 120 s, exponential]                                   */ \
+    X(rt60_s,     "rt60_s",      3.3f,  0.05f,120.f, kExp, "s",   "RT60"          ) \
+                                                                               \
     /* bloom  [0.25 – 12×, linear]                                           */ \
     /* Multiplier on the effective RT60 in the fb_gain formula.              */ \
-    /* At bloom > 1 the tail grows before it fades — the SMD swell.         */ \
-    /* At bloom = 1: standard Schroeder decay (falls from onset).            */ \
-    X(bloom,   "bloom",   3.14f, 0.25f, 12.f, kLin, "x",  "Bloom"         ) \
+    /* > 1: tail grows before it fades (SMD swell).  1: standard decay.     */ \
+    X(bloom,      "bloom",       3.14f, 0.25f, 12.f, kLin, "x",   "Bloom"         ) \
+                                                                               \
+    /* ── MODULATION ─────────────────────────────────────────────────────── */ \
+    /* mod_hz  [0.005 – 5 Hz, exponential]  — LFO rate                      */ \
+    X(mod_hz,     "mod_hz",      0.5f,  0.005f, 5.f, kExp, "Hz",  "Mod rate"      ) \
+                                                                               \
+    /* mod_ms  [0 – 5 ms, linear]  — LFO depth (peak delay swing)           */ \
+    X(mod_ms,     "mod_ms",      1.5f,  0.f,   5.f, kLin, "ms",  "Mod depth"     ) \
                                                                                \
     /* ── IN-LOOP EQ ─────────────────────────────────────────────────────── */ \
     /* Single knob driving two baked shelves on every loop pass.             */ \
     /* Corners baked: HP = pitch 108 (~4186 Hz), LP = pitch 36 (~65 Hz).    */ \
-    /* Asymmetric dB scaling (Reaktor ensemble source values):               */ \
     /*   hb_dB = clamp(eq × 18,     −∞, 0)   eq < 0 → dark  (HF cut)       */ \
     /*   lb_dB = clamp(eq × −25.92, −∞, 0)   eq > 0 → thin  (LF cut)       */ \
-    /* Output shelf (outside loop) uses symmetric ±36 dB, can boost.        */ \
-    /* At eq = 0 all shelves are flat.                                       */ \
-    X(dmp_eq,  "dmp_eq",  0.f,  -1.f,  1.f, kLin, "",   "EQ"            ) \
+    /* Output shelf uses symmetric ±36 dB.  eq = 0: flat.                   */ \
+    X(dmp_eq,     "dmp_eq",      0.f,  -1.f,   1.f, kLin, "",    "EQ"            ) \
                                                                                \
     /* ── CROSSFADES ─────────────────────────────────────────────────────── */ \
-    /* Equal-power (cos/sin) mixing — avoids the 3 dB hole that linear mix   */ \
-    /* creates when the two signals are decorrelated (as they always are).   */ \
+    /* 0 = early only, 1 = late only.                                        */ \
+    X(el_mix,     "el_mix",      0.55f, 0.f,   1.f, kLin, "",    "Early/Late"    ) \
                                                                                \
-    /* el_mix  [0 – 1, linear]                                               */ \
-    /* 0: early only (discrete taps, transient detail, no tail).             */ \
-    /* 1: late only (smooth sustained tail, no echo structure).              */ \
-    X(el_mix,  "el_mix",  0.55f, 0.f,  1.f, kLin, "",   "Early/Late"    ) \
-                                                                               \
-    /* dw_mix  [0 – 1, linear]                                               */ \
-    /* 0: dry only.  1: full wet (send/return use).                          */ \
-    X(dw_mix,  "dw_mix",  0.5f,  0.f,  1.f, kLin, "",   "Dry/Wet"       )
+    /* 0 = dry only, 1 = full wet (send/return use).                         */ \
+    X(dw_mix,     "dw_mix",      0.5f,  0.f,   1.f, kLin, "",    "Dry/Wet"       )
 
 // ── generated: the struct ────────────────────────────────────────────────────
 
@@ -98,29 +103,9 @@ struct Params {
     VERB_PARAM_LIST(X)
 #undef X
 
-    // Derived from size via original Reaktor formulas (S = size × 100).
-    // Do not set directly; call Derive() after changing size.
-    float predelay_ms = 10.1f;   // (sqrt(S × 2e-5) + 0.002) × 1000   @ size=0.033
-    float er_sz       = 58.6f;   // 60 − S × 0.42
-    float er_sym      =  0.10f;  // sqrt(S × 0.003)  — stereo spread in semitones
-    float er_dffs     =  0.13f;  // sqrt(S × 0.005)  — allpass coefficient
-    float rt60_s      =  3.3f;   // S  (seconds)
-    float mod_hz      =  0.03f;  // S × 0.01  (Hz)
-    float mod_ms      =  0.03f;  // S × 0.01  (ms)
+    float lt_sym = 2.5f;  // baked: ±2.5 semi between late L and R loop
 
-    // Baked stereo symmetry constant — not derived.
-    float lt_sym = 2.5f;  // ±2.5 semi between late L and R loop
-
-    void Derive() {
-        const float S = size * 100.f;
-        predelay_ms = (sqrtf(S * 2e-05f) + 0.002f) * 1000.f;
-        er_sz       = 60.f  - S * 0.42f;
-        er_sym      = sqrtf(S * 0.003f);
-        er_dffs     = sqrtf(S * 0.005f);
-        rt60_s      = fmaxf(S, 0.05f);
-        mod_hz      = fmaxf(S * 0.01f, 0.005f);
-        mod_ms      = S * 0.01f;
-    }
+    void Derive() {}      // placeholder for future SIZE macro; currently a no-op
 };
 
 // ── generated: the descriptor table ──────────────────────────────────────────

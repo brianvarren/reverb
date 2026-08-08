@@ -101,18 +101,28 @@ static void row_ui(const char* label, float* v, float lo, float hi,
 }
 
 static void build_rows(Ui& ui) {
-    row_header("SIZE");
-    row_param(kP_size);
-
-    row_header("PREDELAY STEREO");
+    row_header("PREDELAY");
+    row_param(kP_predelay_ms);
     row_param(kP_pd_sym);
+
+    row_header("EARLY");
+    row_param(kP_er_sz);
+    row_param(kP_er_sym);
+    row_param(kP_er_dffs);
 
     row_header("LATE");
     row_param(kP_lt_sz);
     row_param(kP_lt_theta);
 
     row_header("DECAY");
+    row_param(kP_rt60_s);
     row_param(kP_bloom);
+
+    row_header("MODULATION");
+    row_param(kP_mod_hz);
+    row_param(kP_mod_ms);
+
+    row_header("EQ");
     row_param(kP_dmp_eq);
 
     row_header("MIX");
