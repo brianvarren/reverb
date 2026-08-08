@@ -130,10 +130,11 @@ private:
     }
 
     void _update_shelves(const Params& p, float fs) {
-        float hf = pitch_to_hz(p.dmp_hf);
-        float hb = db_to_lin(p.dmp_hb);
-        float lf = pitch_to_hz(p.dmp_lf);
-        float lb = db_to_lin(p.dmp_lb);
+        constexpr float kHpPitch = 108.f, kLpPitch = 36.f;
+        float hf = pitch_to_hz(kHpPitch);
+        float lf = pitch_to_hz(kLpPitch);
+        float hb = db_to_lin(fminf(p.dmp_eq *  18.f,    0.f));
+        float lb = db_to_lin(fminf(p.dmp_eq * -25.92f,  0.f));
         for (int k = 0; k < 3; ++k) {
             shelfL_[k].SetParams(hf, hb, lf, lb, fs);
             shelfR_[k].SetParams(hf, hb, lf, lb, fs);

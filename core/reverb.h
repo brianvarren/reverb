@@ -32,7 +32,8 @@ public:
     }
 
     // Call once after Init to skip the startup ramp.
-    void SnapParams(const Params& p) {
+    void SnapParams(Params p) {
+        p.Derive();
         early_.SnapParams(p, fs_);
         late_ .SnapParams(p, fs_);
         _update_out_shelf(p);
@@ -40,7 +41,8 @@ public:
     }
 
     // Call once per block before the per-sample loop (firmware path).
-    void UpdateBlock(const Params& p) {
+    void UpdateBlock(Params p) {
+        p.Derive();
         early_.UpdateBlock(p, fs_);
         late_ .UpdateBlock(p, fs_);
         _update_out_shelf(p);
@@ -67,10 +69,11 @@ public:
 
 private:
     void _update_out_shelf(const Params& p) {
-        float hf = pitch_to_hz(p.eo_hf);
-        float hb = db_to_lin(p.eo_hb);
-        float lf = pitch_to_hz(p.eo_lf);
-        float lb = db_to_lin(p.eo_lb);
+        constexpr float kHpPitch = 108.f, kLpPitch = 36.f;
+        float hf = pitch_to_hz(kHpPitch);
+        float lf = pitch_to_hz(kLpPitch);
+        float hb = db_to_lin(p.dmp_eq *  36.f);  // symmetric, unrestricted, can boost
+        float lb = db_to_lin(p.dmp_eq * -36.f);
         out_shelfL_.SetParams(hf, hb, lf, lb, fs_);
         out_shelfR_.SetParams(hf, hb, lf, lb, fs_);
     }

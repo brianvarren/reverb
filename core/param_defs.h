@@ -14,10 +14,7 @@
 //
 // To add a parameter: one line in VERB_PARAM_LIST. Nothing else.
 //
-// X(id, key, default, lo, hi, curve, unit, label, hint)
-//
-// hint   one-line plain-English description of what the parameter does to the
-//        sound; displayed in the TUI while the parameter is selected.
+// X(id, key, default, lo, hi, curve, unit, label)
 //
 // curve  controls the 0..1 → value mapping used by hardware knobs and any UI:
 //   kLin    linear                       v = lo + x(hi−lo)
@@ -34,132 +31,83 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
 #define VERB_PARAM_LIST(X)                                                     \
                                                                                \
     /* ── SIZE ───────────────────────────────────────────────────────────── */ \
-    /* Single macro parameter that derives predelay, early size/sym/dffs,    */ \
-    /* late size, RT60, injection diffusion, and modulation rate/depth.      */ \
-    /* Call Params::Derive() after changing this field.                      */ \
-    /* sqrt curves give perceptually even control; zones:                    */ \
-    /*   0.00–0.05: slap/chamber  0.05–0.2: room/hall                       */ \
-    /*   0.2–0.6: large/cathedral  0.6–1.0: vast/infinite drone             */ \
-    X(size,        "size",             0.033f,  0.f,    1.f,  kLin,   "",     "Size",               "Room size — slap echo to infinite drone; all geometry params follow; call Derive() after change"   ) \
+    /* Single macro that derives all geometry: predelay, early size,         */ \
+    /* late size, RT60, mod rate/depth.  Call Params::Derive() after change. */ \
+    /* Character zones:                                                      */ \
+    /*   0.00–0.05: slap/chamber   0.05–0.25: room/hall                     */ \
+    /*   0.25–0.6:  large/cave     0.6–1.0:   vast drone / near-infinite    */ \
+    X(size,    "size",    0.033f, 0.f, 1.f, kLin, "",   "Size"          ) \
                                                                                \
-    /* ── PREDELAY ──────────────────────────────────────────────────────── */ \
-                                                                               \
-    /* pd_sym  [0 – 25 ms, squared]                                         */ \
-    /* Offsets L and R predelay times in opposite directions:                */ \
+    /* ── PREDELAY STEREO ────────────────────────────────────────────────── */ \
+    /* pd_sym  [0 – 100 ms², squared]                                        */ \
+    /* Offsets L and R predelay by ±pd_sym:                                  */ \
     /*   T_L = predelay_ms − pd_sym,  T_R = predelay_ms + pd_sym            */ \
-    /* Real rooms create stereo width for a centre source primarily through  */ \
-    /* inter-channel arrival-time differences; this replicates that cheaply  */ \
-    /* and statically, before any diffusion.  Squared mapping keeps the      */ \
-    /* useful 0–5 ms range across the bottom half of the knob.  Above ~8 ms  */ \
-    /* the channels start to feel like two independent reverbs.              */ \
-    X(pd_sym,      "pd_sym",            0.3f,   0.f,  100.f,  kSq,    "ms",   "Pre-delay spread",   "Offsets L/R arrival times for stereo width; above ~8 ms feels like two separate rooms"            ) \
+    /* Squared mapping keeps the useful 0–5 ms range in the bottom half.     */ \
+    /* Above ~8 ms the two channels start to feel like separate reverbs.     */ \
+    X(pd_sym,  "pd_sym",  0.3f,  0.f, 100.f, kSq,  "ms", "Pre-delay spread") \
                                                                                \
-    /* ── EARLY / LATE GEOMETRY (derived from size) ──────────────────────── */ \
-    /* er_sz, er_sym, er_dffs, ij_dffs, lt_sz are computed by Params::Derive.*/ \
+    /* ── LATE SECTION ───────────────────────────────────────────────────── */ \
+    /* lt_theta  [0 – π/4 rad, linear]                                       */ \
+    /* Rotation angle in the 2×2 orthogonal diffuser before each delay read. */ \
+    /* θ = 0: identity — echoes, no diffusion.                               */ \
+    /* θ = π/4: max mixing — smooth, dense tail.                             */ \
+    /* Lower = more articulate and echo-y; higher = more wash.               */ \
+    X(lt_theta,"lt_theta",0.7853982f, 0.f, 0.7853982f, kLin, "rad", "Late scatter") \
                                                                                \
-    /* ── LATE SECTION ──────────────────────────────────────────────────── */ \
-    /* Cross-coupled stereo feedback loop: three rotation-diffuser stages,   */ \
-    /* a chain shelf, two long delay lines, and an 8-phase LFO on every tap.*/ \
-    /* This is the recirculating core that builds and sustains the tail.     */ \
+    /* ── DECAY ──────────────────────────────────────────────────────────── */ \
+    /* bloom  [0.25 – 12×, linear]                                           */ \
+    /* Multiplier on the effective RT60 in the fb_gain formula.              */ \
+    /* At bloom > 1 the tail grows before it fades — the SMD swell.         */ \
+    /* At bloom = 1: standard Schroeder decay (falls from onset).            */ \
+    X(bloom,   "bloom",   3.14f, 0.25f, 12.f, kLin, "x",  "Bloom"         ) \
                                                                                \
-    /* lt_sym  [0 – 8 semitones, linear]                                    */ \
-    /* SzL / SzR detune for the late loop.  The two cross-coupled channels  */ \
-    /* run at slightly different loop lengths, offsetting their resonant     */ \
-    /* frequencies so neither rings in sympathy with the other.  Result:     */ \
-    /* a wide, tonally neutral late tail.  1–2 semi is usually enough;       */ \
-    /* large values make the two channels sound tonally dissimilar.          */ \
-    X(lt_sym,      "lt_sym",            1.2f,   0.f,   12.f,  kLin,   "semi", "Late width",         "L/R loop offset — prevents sympathetic ringing between channels; wide stereo tail"               ) \
+    /* ── IN-LOOP EQ ─────────────────────────────────────────────────────── */ \
+    /* Single knob driving two baked shelves on every loop pass.             */ \
+    /* Corners baked: HP = pitch 108 (~4186 Hz), LP = pitch 36 (~65 Hz).    */ \
+    /* Asymmetric dB scaling (Reaktor ensemble source values):               */ \
+    /*   hb_dB = clamp(eq × 18,     −∞, 0)   eq < 0 → dark  (HF cut)       */ \
+    /*   lb_dB = clamp(eq × −25.92, −∞, 0)   eq > 0 → thin  (LF cut)       */ \
+    /* Output shelf (outside loop) uses symmetric ±36 dB, can boost.        */ \
+    /* At eq = 0 all shelves are flat.                                       */ \
+    X(dmp_eq,  "dmp_eq",  0.f,  -1.f,  1.f, kLin, "",   "EQ"            ) \
                                                                                \
-    /* lt_theta  [0 – π/4 radians, linear]                                  */ \
-    /* Rotation angle in the 2×2 orthogonal diffuser before each delay read: */ \
-    /*   [a', b'] = [a·cosθ − b·sinθ,  a·sinθ + b·cosθ]                     */ \
-    /* θ = 0: identity matrix, rails fully decoupled — echoes, no diffusion. */ \
-    /* θ = π/4 (default): maximum mixing, each output is equal parts of both.*/ \
-    /* The matrix is orthogonal (RᵀR = I), so ‖Ra‖ = ‖a‖: energy is         */ \
-    /* redistributed but never created, safe under recirculation.            */ \
-    /* Low angles: loose, echo-y tail, clear stereo separation between rails. */ \
-    /* High angles: density builds faster, smoother and more diffuse tail.   */ \
-    /* Reduce from π/4 for a more articulate, less washy character.          */ \
-    X(lt_theta,    "lt_theta",          0.7853982f, 0.f, 0.7853982f, kLin, "rad", "Late scatter",   "Rotation mixing — pi/4 = max density/diffusion; lower = more echo-y, clearer stereo separation"   ) \
+    /* ── CROSSFADES ─────────────────────────────────────────────────────── */ \
+    /* Equal-power (cos/sin) mixing — avoids the 3 dB hole that linear mix   */ \
+    /* creates when the two signals are decorrelated (as they always are).   */ \
                                                                                \
-    /* ── DECAY ─────────────────────────────────────────────────────────── */ \
+    /* el_mix  [0 – 1, linear]                                               */ \
+    /* 0: early only (discrete taps, transient detail, no tail).             */ \
+    /* 1: late only (smooth sustained tail, no echo structure).              */ \
+    X(el_mix,  "el_mix",  0.55f, 0.f,  1.f, kLin, "",   "Early/Late"    ) \
                                                                                \
-    /* rt60_s is derived from size by Params::Derive().                      */ \
-    /* bloom  [1 – 6×, linear]                                              */ \
-    /* Multiplier on the effective RT60 used in the fb_gain formula:         */ \
-    /*   fb_gain targets a decay of  rt60_s · bloom  seconds                 */ \
-    /* This sets fb_gain higher than the in-loop shelves can sustain, so the */ \
-    /* tail initially grows in apparent level before it fades — the audible  */ \
-    /* "bloom" or swell that is the Space Master Deluxe's characteristic     */ \
-    /* sound.  At bloom = 1 the formula is the standard Schroeder result and */ \
-    /* the tail falls immediately from the onset.  At the default (π ≈ 3.14) */ \
-    /* fb_gain targets ~3× the realised decay — rich, late-building.        */ \
-    /* Reduce bloom if the tail sounds unstable or overly swollen.           */ \
-    X(bloom,       "bloom",             3.14f,  0.25f,  12.f,  kLin,   "x",    "Bloom",              "Swell multiplier — tail builds before fading (SMD character); reduce if tail sounds unstable"      ) \
-                                                                               \
-    /* ── MODULATION ────────────────────────────────────────────────────── */ \
-    /* mod_hz and mod_ms are derived from size by Params::Derive().         */ \
-                                                                               \
-    /* ── IN-LOOP SHELVES (dmp_*) ───────────────────────────────────────── */ \
-    /* Two-band shelf inside the feedback loop: one per rotation-diffuser    */ \
-    /* stage (×3) plus one chain shelf = four filter passes per round-trip.  */ \
-    /* Gains are hard-capped at 0 dB.  Shelf<true>::SetParams asserts this.  */ \
-    /*                                                                       */ \
-    /* Corners are baked: HP = pitch 108 (~4186 Hz), LP = pitch 36 (~65 Hz) */ \
-    /* Single EQ knob drives both gains with asymmetric scaling:             */ \
-    /*   hb_dB = clamp(eq × 18,    −48, 0)   EQ<0 = dark  (HF cut)         */ \
-    /*   lb_dB = clamp(eq × −25.92, −48, 0)  EQ>0 = thin  (LF cut)         */ \
-    /* Asymmetric multipliers are perceptual: LF needs more cut for the      */ \
-    /* same perceived tonal shift.  At EQ=0 both shelves are flat.          */ \
-                                                                               \
-    X(dmp_eq,      "dmp_eq",             0.f,   -1.f,    1.f,  kLin,   "",     "EQ",                 "In-loop tonal balance: − = dark (HF fades faster), + = thin (LF fades faster), 0 = flat"       ) \
-                                                                               \
-    /* ── OUTPUT SHELF (eo_*) ───────────────────────────────────────────── */ \
-    /* ── CROSSFADES ────────────────────────────────────────────────────── */ \
-    /* Both use equal-power (cos/sin) mixing.  Linear mixing creates a 3 dB  */ \
-    /* hole at the midpoint when the two signals are decorrelated, as they    */ \
-    /* always are here.                                                      */ \
-                                                                               \
-    /* el_mix  [0 – 1, linear]                                              */ \
-    /* Blend between early section and late loop output.                     */ \
-    /* 0: early only — discrete taps, transient detail, no sustained tail.   */ \
-    /* 1: late only — smooth, sustained tail, no initial echo structure.     */ \
-    /* Early shapes perceived room geometry; late provides sustain.          */ \
-    /* Default 0.85 (mostly late) gives a large reverb that still sounds     */ \
-    /* like a space.  Lower (0.4–0.6): more room character.  Higher:         */ \
-    /* more ambient texture, less defined geometry.                          */ \
-    X(el_mix,      "el_mix",            0.85f,  0.f,    1.f,  kLin,   "",     "Early/Late",         "Early/late blend — lower = more room geometry; higher = smooth ambient wash with less structure"  ) \
-                                                                               \
-    /* dw_mix  [0 – 1, linear]                                              */ \
-    /* Dry/wet blend.  0: dry only.  1: wet only — correct for send/return.  */ \
-    /* For insert use, blend to taste.  Equal-power crossfade means the dry  */ \
-    /* signal does not change level as the wet is faded in.                  */ \
-    X(dw_mix,      "dw_mix",            1.f,    0.f,    1.f,  kLin,   "",     "Dry/Wet",            "Dry/wet blend — 1 = full wet for send/return; blend for insert use (equal-power crossfade)"     )
+    /* dw_mix  [0 – 1, linear]                                               */ \
+    /* 0: dry only.  1: full wet (send/return use).                          */ \
+    X(dw_mix,  "dw_mix",  0.5f,  0.f,  1.f, kLin, "",   "Dry/Wet"       )
 
 // ── generated: the struct ────────────────────────────────────────────────────
 
 struct Params {
-#define X(id, key, def, lo, hi, curve, unit, label, hint) float id = def;
+#define X(id, key, def, lo, hi, curve, unit, label) float id = def;
     VERB_PARAM_LIST(X)
 #undef X
 
-    // Computed from size — do not set directly; call Derive() after changing size.
-    float predelay_ms = 40.f;
-    float er_sz       = 30.f;
-    float er_sym      =  1.f;
-    float er_dffs     = 0.68f;
-    float ij_dffs     = 0.70f;
-    float lt_sz       = 24.f;
-    float rt60_s      =  4.f;
-    float mod_hz      =  0.7f;
-    float mod_ms      =  0.6f;
+    // Derived from size — do not set directly; call Derive() after changing size.
+    float predelay_ms = 56.3f;  // sqrt(0.033 × 89500) + 2
+    float er_sz       = 58.6f;  // 60 − (0.033 × 42)
+    float er_dffs     =  0.18f; // sqrt(0.033 × 0.96)
+    float lt_sz       = 46.6f;  // 48 − (0.033 × 42)
+    float rt60_s      =  3.96f; // 0.033 × 120
+    float mod_hz      =  0.66f; // 0.033 × 20
+    float mod_ms      =  0.66f; // 0.033 × 20
+
+    // Baked stereo symmetry constants — not user-facing, not derived.
+    float er_sym = 2.0f;  // ±2 semi between early L and R chains
+    float lt_sym = 2.5f;  // ±2.5 semi between late L and R loop
 
     void Derive() {
         predelay_ms = sqrtf(size * 89500.f) + 2.f;
         er_sz       = 60.f - (size * 42.f);
-        er_sym      = sqrtf(size * 144.f);
         er_dffs     = sqrtf(size * 0.96f);
-        ij_dffs     = fminf(powf(size, 1.f / 8.f), 0.98f);
         lt_sz       = 48.f - (size * 42.f);
         rt60_s      = fmaxf(size * 120.f, 0.05f);
         mod_hz      = fmaxf(size * 20.f, 0.005f);
@@ -175,11 +123,10 @@ struct ParamDesc {
     ParamCurve  curve;
     const char* unit;
     const char* label;
-    const char* hint;
 };
 
 enum ParamId {
-#define X(id, key, def, lo, hi, curve, unit, label, hint) kP_##id,
+#define X(id, key, def, lo, hi, curve, unit, label) kP_##id,
     VERB_PARAM_LIST(X)
 #undef X
     kParamCount
@@ -187,7 +134,7 @@ enum ParamId {
 
 inline const ParamDesc* ParamTable() {
     static const ParamDesc t[kParamCount] = {
-#define X(id, key, def, lo, hi, curve, unit, label, hint) { key, def, lo, hi, curve, unit, label, hint },
+#define X(id, key, def, lo, hi, curve, unit, label) { key, def, lo, hi, curve, unit, label },
         VERB_PARAM_LIST(X)
 #undef X
     };
@@ -197,7 +144,7 @@ inline const ParamDesc* ParamTable() {
 // Pointer-to-member access so generic code can read/write by index.
 inline float* ParamSlot(Params& p, int i) {
     float* base[kParamCount] = {
-#define X(id, key, def, lo, hi, curve, unit, label, hint) &p.id,
+#define X(id, key, def, lo, hi, curve, unit, label) &p.id,
         VERB_PARAM_LIST(X)
 #undef X
     };
@@ -221,8 +168,7 @@ inline int ParamsClamp(Params& p) {
 
 // ── normalised knob mapping ──────────────────────────────────────────────────
 // x in [0,1] → parameter value, honouring the curve. This is the function the
-// Daisy firmware calls on every ADC read, and it is the reason the curve lives
-// in the table rather than being buried in the knob-reading code.
+// Daisy firmware calls on every ADC read.
 
 inline float ParamMapNorm(int i, float x) {
     const ParamDesc& d = ParamTable()[i];

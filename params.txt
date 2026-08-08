@@ -1,34 +1,7 @@
-# verb parameter file — re-read on every render, edit freely
-# See core/params.h for full list; units in comments.
-
-predelay_ms = 40.0      # ms
-pd_sym      = 0.3       # ms (L gets -pd_sym, R gets +pd_sym)
-
-er_sz       = 30.0      # MIDI pitch
-er_sym      = 1.0       # semitones
-er_dffs     = 0.68      # allpass coefficient [0.5, 0.8]
-
-lt_sz       = 24.0      # MIDI pitch
-lt_sym      = 1.2       # semitones
-lt_theta    = 0.7853982 # rotation angle (pi/4 = full scatter)
-
-rt60_s      = 4.0       # seconds
-bloom       = 3.14      # RT60 multiplier (see §6.3 in plan)
-
-mod_ms      = 0.6       # modulation depth (ms)
-mod_hz      = 0.7       # modulation rate (Hz)
-
-# in-loop shelves — gains MUST be <= 0 dB (stability requirement)
-dmp_hf      = 96.0      # high shelf freq (pitch -> ~2093 Hz)
-dmp_hb      = -7.0      # high shelf gain (dB, <= 0)
-dmp_lf      = 60.0      # low shelf freq  (pitch -> ~262 Hz)
-dmp_lb      = 0.0       # low shelf gain  (dB, <= 0)
-
-# output shelf — boost allowed here
-eo_hf       = 100.0     # output high shelf freq (pitch -> ~2637 Hz)
-eo_hb       = -3.0      # output high shelf gain (dB)
-eo_lf       = 65.0      # output low shelf freq  (pitch -> ~349 Hz)
-eo_lb       = 3.0       # output low shelf gain  (dB)
-
-el_mix      = 0.85      # early/late blend (0=early, 1=late)
-dw_mix      = 1.0       # dry/wet (1=fully wet)
+size      = 0.033000    # Size — slap to drone
+pd_sym    = 0.300000    # Pre-delay spread — ms
+lt_theta  = 0.785398    # Late scatter — rad (pi/4 = max)
+bloom     = 3.140000    # Bloom — x
+dmp_eq    = 0.000000    # EQ — (-1=dark, 0=flat, +1=thin)
+el_mix    = 0.550000    # Early/Late
+dw_mix    = 0.500000    # Dry/Wet

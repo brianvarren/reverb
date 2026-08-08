@@ -101,26 +101,16 @@ static void row_ui(const char* label, float* v, float lo, float hi,
 }
 
 static void build_rows(Ui& ui) {
-    row_header("PREDELAY / EARLY");
-    row_param(kP_predelay_ms); row_param(kP_pd_sym);
-    row_param(kP_er_sz); row_param(kP_er_sym); row_param(kP_er_dffs);
+    row_header("SIZE");
+    row_param(kP_size);
 
-    row_header("LATE LOOP");
-    row_param(kP_lt_sz); row_param(kP_lt_sym); row_param(kP_lt_theta);
+    row_header("PREDELAY STEREO");
+    row_param(kP_pd_sym);
 
-    row_header("DECAY");
-    row_param(kP_rt60_s); row_param(kP_bloom);
-
-    row_header("MOTION");
-    row_param(kP_mod_ms); row_param(kP_mod_hz);
-
-    row_header("DAMPING (in loop)");
-    row_param(kP_dmp_hf); row_param(kP_dmp_hb);
-    row_param(kP_dmp_lf); row_param(kP_dmp_lb);
-
-    row_header("OUTPUT EQ");
-    row_param(kP_eo_hf); row_param(kP_eo_hb);
-    row_param(kP_eo_lf); row_param(kP_eo_lb);
+    row_header("CHARACTER");
+    row_param(kP_lt_theta);
+    row_param(kP_bloom);
+    row_param(kP_dmp_eq);
 
     row_header("MIX");
     row_param(kP_el_mix); row_param(kP_dw_mix);
@@ -556,8 +546,12 @@ int main(int argc, char** argv) {
         const float fs = float(dev.sampleRate);
         char line[512];
         {
-            const float erL = g_eng.GetParam(kP_er_sz) - g_eng.GetParam(kP_er_sym);
-            const float erR = g_eng.GetParam(kP_er_sz) + g_eng.GetParam(kP_er_sym);
+            // Derive geometry from size (mirrors Params::Derive())
+            const float sz   = g_eng.GetParam(kP_size);
+            const float pdms = sqrtf(sz * 89500.f) + 2.f;
+            const float erSz = 60.f - (sz * 42.f);
+            const float erL  = erSz - 2.0f;   // er_sym baked at 2.0
+            const float erR  = erSz + 2.0f;
             const float off[3] = { 8.f, 4.f, 0.f };
             char a[128] = {0}, b[128] = {0};
             for (int i = 0; i < 3; ++i) {
@@ -569,38 +563,43 @@ int main(int argc, char** argv) {
                          pitch_to_samples(erR + off[i], fs) * 1000.f / fs);
                 strncat(b, t, sizeof(b) - strlen(b) - 1);
             }
+            const float pdSym = g_eng.GetParam(kP_pd_sym);
             snprintf(line, sizeof line,
                      "EARLY  predelay %.1f/%.1f ms   allpass L %s ms   R %s ms",
-                     g_eng.GetParam(kP_predelay_ms) - g_eng.GetParam(kP_pd_sym),
-                     g_eng.GetParam(kP_predelay_ms) + g_eng.GetParam(kP_pd_sym), a, b);
+                     pdms - pdSym, pdms + pdSym, a, b);
             put(y++, line);
         }
         {
-            const float szL = g_eng.GetParam(kP_lt_sz) - g_eng.GetParam(kP_lt_sym);
-            const float szR = g_eng.GetParam(kP_lt_sz) + g_eng.GetParam(kP_lt_sym);
+            const float sz   = g_eng.GetParam(kP_size);
+            const float ltSz = 48.f - (sz * 42.f);
+            const float szL  = ltSz - 2.5f;   // lt_sym baked at 2.5
+            const float szR  = ltSz + 2.5f;
             float D = 0.f;
             for (int k = 0; k < 3; ++k) {
                 const float o = float(9 - 3 * k);
                 D += 0.5f * (pitch_to_samples(szL + o, fs) + pitch_to_samples(szR + o, fs));
             }
             D += 0.5f * (pitch_to_samples(szL, fs) + pitch_to_samples(szR, fs));
-            const float rt = g_eng.GetParam(kP_rt60_s), bl = g_eng.GetParam(kP_bloom);
+            const float rt = fmaxf(sz * 120.f, 0.05f);
+            const float bl = g_eng.GetParam(kP_bloom);
             float fb = powf(10.f, -3.f * (D / fs) / (rt * bl));
             const bool capped = fb > 0.995f;
             if (capped) fb = 0.995f;
             snprintf(line, sizeof line,
-                     "LATE   loop %.1f ms   fb %.5f%s   target decay %.1f s (rt60 x bloom)",
-                     D * 1000.f / fs, fb, capped ? " CAP" : "", rt * bl);
+                     "LATE   loop %.1f ms   fb %.5f%s   rt60 %.1f s   target decay %.1f s",
+                     D * 1000.f / fs, fb, capped ? " CAP" : "", rt, rt * bl);
             put(y++, line);
         }
         {
+            constexpr float kHpHz = 4186.f, kLpHz = 65.f;  // pitch 108, pitch 36
+            const float eq = g_eng.GetParam(kP_dmp_eq);
+            const float hb_loop = fminf(eq *  18.f,    0.f);
+            const float lb_loop = fminf(eq * -25.92f,  0.f);
+            const float hb_out  = eq *  36.f;
+            const float lb_out  = eq * -36.f;
             snprintf(line, sizeof line,
-                     "FILTER damp %.0f Hz %+.1f dB / %.0f Hz %+.1f dB    "
-                     "out %.0f Hz %+.1f dB / %.0f Hz %+.1f dB",
-                     pitch_to_hz(g_eng.GetParam(kP_dmp_hf)), g_eng.GetParam(kP_dmp_hb),
-                     pitch_to_hz(g_eng.GetParam(kP_dmp_lf)), g_eng.GetParam(kP_dmp_lb),
-                     pitch_to_hz(g_eng.GetParam(kP_eo_hf)),  g_eng.GetParam(kP_eo_hb),
-                     pitch_to_hz(g_eng.GetParam(kP_eo_lf)),  g_eng.GetParam(kP_eo_lb));
+                     "EQ     loop %.0f/%+.1f dB  %.0f/%+.1f dB    out %.0f/%+.1f dB  %.0f/%+.1f dB",
+                     kHpHz, hb_loop, kLpHz, lb_loop, kHpHz, hb_out, kLpHz, lb_out);
             put(y++, line);
         }
 

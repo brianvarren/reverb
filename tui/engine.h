@@ -6,6 +6,7 @@
 #include <new>
 #include <vector>
 
+#include "config.h"
 #include "params.h"
 #include "reverb.h"
 #include "testgen.h"
@@ -34,11 +35,7 @@
 
 class Engine {
 public:
-    static constexpr size_t kBlock     = 48;       // control block, matches firmware
-    static constexpr size_t kEarlyBuf  = 16384;   // 341 ms predelay ceiling
-    static constexpr size_t kDiffBuf   = 8192;
-    static constexpr size_t kLongBuf   = 16384;
-    static constexpr size_t kInjectBuf = 4096;    // injection allpass; covers lt_sz full range
+    static constexpr size_t kBlock    = 48;  // control block, matches firmware
     static constexpr int    kHistLen   = 240;     // tail graph, one cell per hop
     static constexpr int    kHistHop   = 20;      // blocks per cell → 20 ms/cell
 
@@ -173,7 +170,6 @@ public:
             Params p;
             for (int i = 0; i < kParamCount; ++i)
                 *ParamSlot(p, i) = ap_[i].load(std::memory_order_relaxed);
-            p.Derive();
             reverb_.UpdateBlock(p);
 
             const uint32_t t = trig_.load(std::memory_order_acquire);
@@ -269,24 +265,20 @@ private:
         memset(early_, 0, sizeof(early_));
         memset(diff_,  0, sizeof(diff_));
         memset(long_,  0, sizeof(long_));
-        memset(inj_,   0, sizeof(inj_));
 
-        float* bufs[18];
+        float* bufs[16];
         for (int i = 0; i < 8; ++i) bufs[i]     = early_[i];
         for (int i = 0; i < 6; ++i) bufs[8 + i] = diff_[i];
         bufs[14] = long_[0];
         bufs[15] = long_[1];
-        bufs[16] = inj_[0];
-        bufs[17] = inj_[1];
 
         reverb_.~Reverb();
         new (&reverb_) Reverb();
-        reverb_.Init(bufs, kEarlyBuf, kDiffBuf, kLongBuf, kInjectBuf, fs_, kBlock);
+        reverb_.Init(bufs, kBufEarly, kBufDiff, kBufLong, fs_, kBlock);
 
         Params p;
         for (int i = 0; i < kParamCount; ++i)
             *ParamSlot(p, i) = ap_[i].load(std::memory_order_relaxed);
-        p.Derive();
         reverb_.SnapParams(p);
 
         gen_.Stop();
@@ -351,10 +343,9 @@ private:
 
     float  fs_ = 48000.f;
     Reverb reverb_;
-    float  early_[8][kEarlyBuf];
-    float  diff_ [6][kDiffBuf];
-    float  long_ [2][kLongBuf];
-    float  inj_  [2][kInjectBuf];
+    float  early_[8][kBufEarly];
+    float  diff_ [6][kBufDiff];
+    float  long_ [2][kBufLong];
 
     TestGen gen_;
     std::vector<float> file_;      // interleaved stereo

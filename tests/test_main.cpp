@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "util.h"
+#include "config.h"
 #include "delay.h"
 #include "shelf.h"
 #include "allpass.h"
@@ -431,13 +432,12 @@ TEST_CASE("Rotation: RᵀR == I within 1e-6, five angles") {
 // passthrough when lp coefficient a≈0 from near-zero cutoff).
 static Params flat_late_params(float rt60_s, float lt_sz = 24.f) {
     Params p;
+    // Set derived fields directly — Late is driven standalone, no Reverb::UpdateBlock
     p.lt_sz   = lt_sz;
-    p.lt_sym  = 0.f;          // symmetric → L==R, cleaner T60 read
+    p.lt_sym  = 0.f;   // override baked 2.5: symmetric → L==R, cleaner T60 read
     p.rt60_s  = rt60_s;
-    p.bloom   = 1.f;          // honest T60 with correct D sum
-    p.dmp_hb  = 0.f;          // 0 dB → hb_lin=1 → high shelf passthrough
-    p.dmp_lf  = -1000.f;      // pitch → ~0 Hz → a≈0 in OnePole → LP(x)=0
-    p.dmp_lb  = -200.f;       // lb_lin≈0 → low shelf output = (1-0)*(x-0) = x
+    p.bloom   = 1.f;   // honest T60 with correct D sum
+    p.dmp_eq  = 0.f;   // flat shelves: dmp_eq=0 → hb=0dB, lb=0dB
     return p;
 }
 
@@ -445,7 +445,7 @@ static Params flat_late_params(float rt60_s, float lt_sz = 24.f) {
 // Fits a line through the -5 to -35 dB range of the EDC and extrapolates to -60.
 static double measure_t60(float rt60_s, float lt_sz = 24.f) {
     constexpr float  kFS      = 48000.f;
-    constexpr size_t kDiffSz  = 4096;
+    constexpr size_t kDiffSz  = kBufDiff;
 
     Params p = flat_late_params(rt60_s, lt_sz);
 
@@ -526,7 +526,7 @@ TEST_CASE("Late: T60 round-trip — fb_gain from target T60 recovers target") {
 
 TEST_CASE("Late: no NaN/Inf after 5-second white-noise soak at low fb_gain") {
     constexpr float  kFS      = 48000.f;
-    constexpr size_t kDiffSz  = 4096;
+    constexpr size_t kDiffSz  = kBufDiff;
     constexpr size_t N        = size_t(5.f * kFS);
 
     Params p;   // default params
@@ -557,7 +557,7 @@ TEST_CASE("Late: modulation is live — output diverges from unmodulated referen
     // Verify the LFO actually moves the delay read heads. Feed identical impulses
     // into two Late instances (mod vs no-mod); outputs must differ after settling.
     constexpr float  kFS     = 48000.f;
-    constexpr size_t kDiffSz = 4096;
+    constexpr size_t kDiffSz = kBufDiff;
     constexpr size_t kSettle = size_t(1.f * kFS);  // 1 s of settling
     constexpr size_t kMeas   = size_t(0.1f * kFS); // 0.1 s measurement window
 
@@ -610,7 +610,7 @@ TEST_CASE("Late: no NaN/Inf after 30-second white-noise soak at fb_gain=0.995 cl
     // Stage 8: stress-test at maximum fb_gain. rt60=60s, bloom=3.14 pushes
     // computed fb_gain to 0.9965, which the clamp holds at 0.995.
     constexpr float  kFS     = 48000.f;
-    constexpr size_t kDiffSz = 4096;
+    constexpr size_t kDiffSz = kBufDiff;
     constexpr size_t N       = size_t(30.f * kFS);
 
     Params p;
