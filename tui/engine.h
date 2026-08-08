@@ -248,7 +248,7 @@ private:
         // Arm the decay capture. It starts for real once the excitation has
         // finished, so the measurement describes the reverb and not the burst.
         if (!cap_ready_.load(std::memory_order_acquire)) {
-            const float rt = fmaxf(ap_[kP_size].load(std::memory_order_relaxed) * 100.f, 0.05f);
+            const float rt = ap_[kP_rt60_s].load(std::memory_order_relaxed);
             const float bl = ap_[kP_bloom ].load(std::memory_order_relaxed);
             long want = long((rt * bl * 1.3f + 0.5f) * fs_ / float(kBlock));
             if (want > kCapMax) want = kCapMax;

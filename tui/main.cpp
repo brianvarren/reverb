@@ -107,9 +107,12 @@ static void build_rows(Ui& ui) {
     row_header("PREDELAY STEREO");
     row_param(kP_pd_sym);
 
+    row_header("DECAY");
+    row_param(kP_rt60_s);
+    row_param(kP_bloom);
+
     row_header("CHARACTER");
     row_param(kP_lt_theta);
-    row_param(kP_bloom);
     row_param(kP_dmp_eq);
 
     row_header("MIX");
