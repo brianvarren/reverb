@@ -92,7 +92,7 @@ struct Params {
 #undef X
 
     // Derived from size — do not set directly; call Derive() after changing size.
-    float predelay_ms = 56.3f;  // sqrt(0.033 × 89500) + 2
+    float predelay_ms = 10.1f;  // sqrt(0.033 × 2000) + 2
     float er_sz       = 58.6f;  // 60 − (0.033 × 42)
     float er_dffs     =  0.18f; // sqrt(0.033 × 0.96)
     float lt_sz       = 46.6f;  // 48 − (0.033 × 42)
@@ -105,7 +105,7 @@ struct Params {
     float lt_sym = 2.5f;  // ±2.5 semi between late L and R loop
 
     void Derive() {
-        predelay_ms = sqrtf(size * 89500.f) + 2.f;
+        predelay_ms = sqrtf(size * 2000.f) + 2.f;
         er_sz       = 60.f - (size * 42.f);
         er_dffs     = sqrtf(size * 0.96f);
         lt_sz       = 48.f - (size * 42.f);
