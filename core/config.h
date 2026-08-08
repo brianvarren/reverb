@@ -11,3 +11,4 @@
 static constexpr size_t kBufEarly = 16384;
 static constexpr size_t kBufDiff  = 32768;
 static constexpr size_t kBufLong  = 32768;
+static constexpr size_t kBufInj   = 1024;   // injection delay: covers 2×mod_ms up to 5 ms @ 48 kHz

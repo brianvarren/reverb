@@ -16,21 +16,25 @@ struct DcBlock {
     }
 };
 
-// Late recirculating network: cross-coupled, 3 rotation stages, long delay.
+// Late recirculating network: cross-coupled, 4 rotation stages, long delay,
+// plus a modulated injection delay on the early→loop path.
 //
-// Signal flow per sample (plan §5):
-//   [aL, aR] = [eL + fbR_(z⁻¹), eR + fbL_(z⁻¹)]   cross-coupled sum
+// Signal flow per sample:
+//   eL/eR → injection delay (LFO-modulated) ─┐
+//   [aL, aR] = [injL + fbR_(z⁻¹), injR + fbL_(z⁻¹)]   cross-coupled sum
 //   × 3 stages: Rotate → Read/Write diffuser delay → LoopShelf
-//   → LoopShelf (chain) → Read/Write long delay → DCBlock → ×fb_gain → fbL_, fbR_
+//   → Rotate (4th) → LoopShelf (chain) → Read/Write long delay → DCBlock → ×fb_gain → fbL_, fbR_
 //
 // Caller-supplied buffers (all zeroed, all power-of-two):
-//   bufs[0..2]  diffuser L stages 0,1,2  (diff_sz recommended 4096)
+//   bufs[0..2]  diffuser L stages 0,1,2  (diff_sz)
 //   bufs[3..5]  diffuser R stages 0,1,2
-//   bufs[6]     long delay L            (long_sz recommended 8192)
+//   bufs[6]     long delay L              (long_sz)
 //   bufs[7]     long delay R
+//   bufs[8]     injection delay L         (inj_sz)
+//   bufs[9]     injection delay R
 class Late {
 public:
-    void Init(float* bufs[8], size_t diff_sz, size_t long_sz,
+    void Init(float* bufs[10], size_t diff_sz, size_t long_sz, size_t inj_sz,
               float fs, size_t block_sz = 48) {
         float blk_dt = float(block_sz) / fs;
         block_sz_ = float(block_sz);
@@ -40,17 +44,21 @@ public:
         }
         longL_.Init(bufs[6], long_sz);
         longR_.Init(bufs[7], long_sz);
+        injL_ .Init(bufs[8], inj_sz);
+        injR_ .Init(bufs[9], inj_sz);
         for (int k = 0; k < 4; ++k) {
             smL_[k].SetTC(0.050f, blk_dt);
             smR_[k].SetTC(0.050f, blk_dt);
         }
+        smInj_[0].SetTC(0.050f, blk_dt);
+        smInj_[1].SetTC(0.050f, blk_dt);
         // Chaos oscillator rates: 0.01 Hz × φ^(k/2), fixed golden-ratio spread.
-        // Slowest completes one cycle in ~100 s; fastest in ~18 s — never aligned.
-        static const float kChaosHz[8] = {
+        static const float kChaosHz[10] = {
             0.01000f, 0.01272f, 0.01618f, 0.02058f,
-            0.02618f, 0.03330f, 0.04236f, 0.05389f
+            0.02618f, 0.03330f, 0.04236f, 0.05389f,
+            0.06854f, 0.08724f
         };
-        for (int k = 0; k < 8; ++k)
+        for (int k = 0; k < 10; ++k)
             chaos_inc_[k] = kChaosHz[k] / fs;
     }
 
@@ -64,6 +72,8 @@ public:
         _update_shelves(p, fs);
         _update_fb(fs, p.rt60_s, p.bloom);
         _update_lfo(p, fs);
+        smInj_[0].Reset(inj_base_); d_inj_[0] = inj_base_;
+        smInj_[1].Reset(inj_base_); d_inj_[1] = inj_base_;
     }
 
     void UpdateBlock(const Params& p, float fs) {
@@ -76,12 +86,14 @@ public:
         _update_shelves(p, fs);
         _update_fb(fs, p.rt60_s, p.bloom);
         _update_lfo(p, fs);
+        d_inj_[0] = smInj_[0].Process(inj_base_);
+        d_inj_[1] = smInj_[1].Process(inj_base_);
         // Compute per-sample mod increments so Process() interpolates smoothly
         // across the block rather than holding frozen values (staircase artifact).
-        float mod_start[8];
-        for (int k = 0; k < 8; ++k) mod_start[k] = mod_[k];
+        float mod_start[10];
+        for (int k = 0; k < 10; ++k) mod_start[k] = mod_[k];
         _step_lfo(block_sz_);
-        for (int k = 0; k < 8; ++k) {
+        for (int k = 0; k < 10; ++k) {
             mod_inc_[k] = (mod_[k] - mod_start[k]) / block_sz_;
             mod_[k]     = mod_start[k];
         }
@@ -94,11 +106,15 @@ public:
             _step_lfo(1.f);
         } else {
             // Block path: advance mod by precomputed per-sample increment.
-            for (int k = 0; k < 8; ++k) mod_[k] += mod_inc_[k];
+            for (int k = 0; k < 10; ++k) mod_[k] += mod_inc_[k];
         }
 
-        float aL = eL + fbR_;
-        float aR = eR + fbL_;
+        // Modulated injection: LFO-modulated short delay before the cross-coupled sum.
+        float iL = injL_.Read4pt(d_inj_[0] + mod_[8]);  injL_.Write(eL);
+        float iR = injR_.Read4pt(d_inj_[1] + mod_[9]);  injR_.Write(eR);
+
+        float aL = iL + fbR_;
+        float aR = iR + fbL_;
 
         for (int k = 0; k < 3; ++k) {
             rot_.Process(aL, aR);
@@ -107,6 +123,7 @@ public:
             aL = shelfL_[k].Process(ra);
             aR = shelfR_[k].Process(rb);
         }
+        rot_.Process(aL, aR);  // 4th rotation before chain shelf
         aL = chainL_.Process(aL);
         aR = chainR_.Process(aR);
 
@@ -164,12 +181,15 @@ private:
     void _update_lfo(const Params& p, float fs) {
         chaos_     = p.chaos;
         mod_depth_ = p.mod_ms * 0.001f * fs;
+        inj_base_  = mod_depth_ + 1.f;  // injection base: center depth + 1 sample guard
         // LFO rates spread by φ^(k/7) at chaos=1, all identical at chaos=0.
-        static const float kLfoRatios[8] = {
+        // Slots 0..3 = L diffusers + long; 4..7 = R counterparts; 8..9 = injection L/R.
+        static const float kLfoRatios[10] = {
             1.0000f, 1.0712f, 1.1474f, 1.2289f,
-            1.3163f, 1.4100f, 1.5103f, 1.6180f
+            1.3163f, 1.4100f, 1.5103f, 1.6180f,
+            1.7330f, 1.8570f
         };
-        for (int k = 0; k < 8; ++k) {
+        for (int k = 0; k < 10; ++k) {
             float ratio = 1.f + p.chaos * (kLfoRatios[k] - 1.f);
             lfo_inc_[k] = p.mod_hz * ratio / fs;
         }
@@ -182,7 +202,7 @@ private:
     void _step_lfo(float stride) {
         const float kTwoPi    = 2.f * float(M_PI);
         const float kChaosAmt = 0.6f;  // max ±60 % depth variance per tap
-        for (int k = 0; k < 8; ++k) {
+        for (int k = 0; k < 10; ++k) {
             lfo_phase_[k] += lfo_inc_[k] * stride;
             if (lfo_phase_[k] >= 1.f) lfo_phase_[k] -= 1.f;
             chaos_phase_[k] += chaos_inc_[k] * stride;
@@ -195,23 +215,27 @@ private:
 
     DelayLine    dlL_[3], dlR_[3];
     DelayLine    longL_, longR_;
+    DelayLine    injL_, injR_;
     LoopShelf    shelfL_[3], shelfR_[3];
     LoopShelf    chainL_, chainR_;
     Rotation     rot_;
     Smoother     smL_[4], smR_[4];
+    Smoother     smInj_[2];
     float        dL_[4] = {}, dR_[4] = {};
     float        tgtL_[4] = {}, tgtR_[4] = {};
+    float        d_inj_[2] = {1.f, 1.f};
     DcBlock      dcL_, dcR_;
     float        fbL_ = 0.f, fbR_ = 0.f;
     float        fb_gain_ = 0.5f;
-    float        lfo_phase_[8]   = {};
-    float        lfo_inc_[8]     = {};
-    float        chaos_phase_[8] = {};
-    float        chaos_inc_[8]   = {};
-    float        chaos_          = 0.f;
-    float        mod_depth_      = 0.f;
-    float        block_sz_  = 48.f;
-    float        mod_[8]     = {};
-    float        mod_inc_[8] = {};
-    bool         block_lfo_  = false;
+    float        lfo_phase_[10]   = {};
+    float        lfo_inc_[10]     = {};
+    float        chaos_phase_[10] = {};
+    float        chaos_inc_[10]   = {};
+    float        chaos_           = 0.f;
+    float        mod_depth_       = 0.f;
+    float        inj_base_        = 1.f;
+    float        block_sz_   = 48.f;
+    float        mod_[10]     = {};
+    float        mod_inc_[10] = {};
+    bool         block_lfo_   = false;
 };

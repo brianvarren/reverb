@@ -449,13 +449,15 @@ static double measure_t60(float rt60_s, float lt_sz = 24.f) {
 
     Params p = flat_late_params(rt60_s, lt_sz);
 
-    // Buffers for 6 diffuser lines + 2 long delays (all same size for simplicity)
-    std::vector<float> storage(8 * kDiffSz, 0.f);
-    float* bufs[8];
+    // Buffers for 6 diffuser lines + 2 long delays + 2 injection delays
+    std::vector<float> storage(8 * kDiffSz + 2 * kBufInj, 0.f);
+    float* bufs[10];
     for (int i = 0; i < 8; ++i) bufs[i] = storage.data() + i * kDiffSz;
+    bufs[8] = storage.data() + 8 * kDiffSz;
+    bufs[9] = storage.data() + 8 * kDiffSz + kBufInj;
 
     Late late;
-    late.Init(bufs, kDiffSz, kDiffSz, kFS);
+    late.Init(bufs, kDiffSz, kDiffSz, kBufInj, kFS);
     late.SnapParams(p, kFS);
 
     // Capture 2.5 * rt60_s seconds of impulse response
@@ -509,11 +511,13 @@ TEST_CASE("Late: T60 round-trip — fb_gain from target T60 recovers target") {
     constexpr float kFS = 48000.f;
     for (float rt60_s : {0.5f, 2.0f, 8.0f}) {
         Params p = flat_late_params(rt60_s);
-        std::vector<float> storage(8 * 4096, 0.f);
-        float* bufs[8];
+        std::vector<float> storage(8 * 4096 + 2 * kBufInj, 0.f);
+        float* bufs[10];
         for (int i = 0; i < 8; ++i) bufs[i] = storage.data() + i * 4096;
+        bufs[8] = storage.data() + 8 * 4096;
+        bufs[9] = storage.data() + 8 * 4096 + kBufInj;
         Late late;
-        late.Init(bufs, 4096, 4096, kFS);
+        late.Init(bufs, 4096, 4096, kBufInj, kFS);
         late.SnapParams(p, kFS);
 
         float D        = late.loop_length_samples();
@@ -530,12 +534,14 @@ TEST_CASE("Late: no NaN/Inf after 5-second white-noise soak at low fb_gain") {
     constexpr size_t N        = size_t(5.f * kFS);
 
     Params p;   // default params
-    std::vector<float> storage(8 * kDiffSz, 0.f);
-    float* bufs[8];
+    std::vector<float> storage(8 * kDiffSz + 2 * kBufInj, 0.f);
+    float* bufs[10];
     for (int i = 0; i < 8; ++i) bufs[i] = storage.data() + i * kDiffSz;
+    bufs[8] = storage.data() + 8 * kDiffSz;
+    bufs[9] = storage.data() + 8 * kDiffSz + kBufInj;
 
     Late late;
-    late.Init(bufs, kDiffSz, kDiffSz, kFS);
+    late.Init(bufs, kDiffSz, kDiffSz, kBufInj, kFS);
     late.SnapParams(p, kFS);
 
     uint32_t rng = 0xFEEDBEEF;
@@ -565,11 +571,13 @@ TEST_CASE("Late: modulation is live — output diverges from unmodulated referen
         Params p;
         p.mod_ms = mod_ms;
         p.mod_hz = 10.f;   // fast rate so effect is visible in 1 s
-        std::vector<float> storage(8 * kDiffSz, 0.f);
-        std::vector<float*> bufs(8);
+        std::vector<float> storage(8 * kDiffSz + 2 * kBufInj, 0.f);
+        std::vector<float*> bufs(10);
         for (int i = 0; i < 8; ++i) bufs[i] = storage.data() + i * kDiffSz;
+        bufs[8] = storage.data() + 8 * kDiffSz;
+        bufs[9] = storage.data() + 8 * kDiffSz + kBufInj;
         Late* l = new Late();
-        l->Init(bufs.data(), kDiffSz, kDiffSz, kFS);
+        l->Init(bufs.data(), kDiffSz, kDiffSz, kBufInj, kFS);
         l->SnapParams(p, kFS);
         return std::make_pair(l, storage);  // storage owns memory
     };
@@ -578,14 +586,17 @@ TEST_CASE("Late: modulation is live — output diverges from unmodulated referen
     Params p_mod;   p_mod.mod_ms = 1.0f;  p_mod.mod_hz = 10.f;
     Params p_nomod; p_nomod.mod_ms = 0.f; p_nomod.mod_hz = 0.f;
 
-    std::vector<float> storMod(8 * kDiffSz, 0.f), storNo(8 * kDiffSz, 0.f);
-    float* bMod[8], *bNo[8];
+    std::vector<float> storMod(8 * kDiffSz + 2 * kBufInj, 0.f),
+                       storNo (8 * kDiffSz + 2 * kBufInj, 0.f);
+    float* bMod[10], *bNo[10];
     for (int i = 0; i < 8; ++i) { bMod[i] = storMod.data() + i*kDiffSz;
                                     bNo[i]  = storNo.data()  + i*kDiffSz; }
+    bMod[8] = storMod.data() + 8*kDiffSz;        bMod[9] = bMod[8] + kBufInj;
+    bNo [8] = storNo .data() + 8*kDiffSz;        bNo [9] = bNo[8]  + kBufInj;
 
     Late lateMod, lateNo;
-    lateMod.Init(bMod, kDiffSz, kDiffSz, kFS);  lateMod.SnapParams(p_mod,   kFS);
-    lateNo .Init(bNo,  kDiffSz, kDiffSz, kFS);  lateNo .SnapParams(p_nomod, kFS);
+    lateMod.Init(bMod, kDiffSz, kDiffSz, kBufInj, kFS);  lateMod.SnapParams(p_mod,   kFS);
+    lateNo .Init(bNo,  kDiffSz, kDiffSz, kBufInj, kFS);  lateNo .SnapParams(p_nomod, kFS);
 
     float oL, oR;
     // Shared impulse to settle both
@@ -617,12 +628,14 @@ TEST_CASE("Late: no NaN/Inf after 30-second white-noise soak at fb_gain=0.995 cl
     p.rt60_s = 60.f;    // → fb_gain hits 0.995 clamp
     p.bloom  = 3.14f;
 
-    std::vector<float> storage(8 * kDiffSz, 0.f);
-    float* bufs[8];
+    std::vector<float> storage(8 * kDiffSz + 2 * kBufInj, 0.f);
+    float* bufs[10];
     for (int i = 0; i < 8; ++i) bufs[i] = storage.data() + i * kDiffSz;
+    bufs[8] = storage.data() + 8 * kDiffSz;
+    bufs[9] = storage.data() + 8 * kDiffSz + kBufInj;
 
     Late late;
-    late.Init(bufs, kDiffSz, kDiffSz, kFS);
+    late.Init(bufs, kDiffSz, kDiffSz, kBufInj, kFS);
     late.SnapParams(p, kFS);
 
     uint32_t rng = 0xCAFEBABE;

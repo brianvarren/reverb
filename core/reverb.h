@@ -12,23 +12,26 @@
 //                               eq-power E/L mix ─┘
 //                               → OutputShelf → eq-power D/W → Out
 //
-// Caller-supplied buffers (16 zeroed power-of-two arrays):
-//   [0..7]   early section  (early_sz each — see Early::Init)
-//   [8..13]  late diffusers (diff_sz each)
-//   [14..15] late long delays (long_sz each)
+// Caller-supplied buffers (18 zeroed power-of-two arrays):
+//   [0..7]   early section       (early_sz each — see Early::Init)
+//   [8..13]  late diffusers      (diff_sz each)
+//   [14..15] late long delays    (long_sz each)
+//   [16..17] late injection delays (inj_sz each)
 class Reverb {
 public:
-    void Init(float* bufs[16], size_t early_sz, size_t diff_sz, size_t long_sz,
-              float fs, size_t block_sz = 48) {
+    void Init(float* bufs[18], size_t early_sz, size_t diff_sz, size_t long_sz,
+              size_t inj_sz, float fs, size_t block_sz = 48) {
         fs_ = fs;
         float* eb[8];
-        float* lb[8];
+        float* lb[10];
         for (int i = 0; i < 8; ++i) eb[i] = bufs[i];
         for (int i = 0; i < 6; ++i) lb[i] = bufs[8 + i];
         lb[6] = bufs[14];
         lb[7] = bufs[15];
+        lb[8] = bufs[16];
+        lb[9] = bufs[17];
         early_.Init(eb, early_sz, fs, block_sz);
-        late_ .Init(lb, diff_sz, long_sz, fs, block_sz);
+        late_ .Init(lb, diff_sz, long_sz, inj_sz, fs, block_sz);
     }
 
     // Call once after Init to skip the startup ramp.

@@ -265,16 +265,19 @@ private:
         memset(early_, 0, sizeof(early_));
         memset(diff_,  0, sizeof(diff_));
         memset(long_,  0, sizeof(long_));
+        memset(inj_,   0, sizeof(inj_));
 
-        float* bufs[16];
+        float* bufs[18];
         for (int i = 0; i < 8; ++i) bufs[i]     = early_[i];
         for (int i = 0; i < 6; ++i) bufs[8 + i] = diff_[i];
         bufs[14] = long_[0];
         bufs[15] = long_[1];
+        bufs[16] = inj_[0];
+        bufs[17] = inj_[1];
 
         reverb_.~Reverb();
         new (&reverb_) Reverb();
-        reverb_.Init(bufs, kBufEarly, kBufDiff, kBufLong, fs_, kBlock);
+        reverb_.Init(bufs, kBufEarly, kBufDiff, kBufLong, kBufInj, fs_, kBlock);
 
         Params p;
         for (int i = 0; i < kParamCount; ++i)
@@ -346,6 +349,7 @@ private:
     float  early_[8][kBufEarly];
     float  diff_ [6][kBufDiff];
     float  long_ [2][kBufLong];
+    float  inj_  [2][kBufInj];
 
     TestGen gen_;
     std::vector<float> file_;      // interleaved stereo
