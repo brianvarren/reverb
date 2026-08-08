@@ -81,6 +81,13 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* mod_ms  [0 – 5 ms, linear]  — LFO depth (peak delay swing)           */ \
     X(mod_ms,     "mod_ms",      1.5f,  0.f,   5.f, kLin, "ms",  "Mod depth"     ) \
                                                                                \
+    /* chaos  [0 – 1, linear]                                                */ \
+    /* At 0: all 8 LFOs locked to the same rate (mod_hz), equally-spaced.   */ \
+    /* At 1: LFO rates spread φ^(k/7) apart (1× – 1.618×), plus a slow     */ \
+    /* per-tap noise oscillator drifts each tap's depth ±60%.               */ \
+    /* Creates non-periodic modulation that sounds alive and never repeats.  */ \
+    X(chaos,      "chaos",       0.f,   0.f,   1.f, kLin, "",    "Chaos"         ) \
+                                                                               \
     /* ── IN-LOOP EQ ─────────────────────────────────────────────────────── */ \
     /* Single knob driving two baked shelves on every loop pass.             */ \
     /* Corners baked: HP = pitch 108 (~4186 Hz), LP = pitch 36 (~65 Hz).    */ \

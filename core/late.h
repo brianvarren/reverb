@@ -44,6 +44,14 @@ public:
             smL_[k].SetTC(0.050f, blk_dt);
             smR_[k].SetTC(0.050f, blk_dt);
         }
+        // Chaos oscillator rates: 0.01 Hz × φ^(k/2), fixed golden-ratio spread.
+        // Slowest completes one cycle in ~100 s; fastest in ~18 s — never aligned.
+        static const float kChaosHz[8] = {
+            0.01000f, 0.01272f, 0.01618f, 0.02058f,
+            0.02618f, 0.03330f, 0.04236f, 0.05389f
+        };
+        for (int k = 0; k < 8; ++k)
+            chaos_inc_[k] = kChaosHz[k] / fs;
     }
 
     void SnapParams(const Params& p, float fs) {
@@ -150,24 +158,35 @@ private:
     }
 
     void _update_lfo(const Params& p, float fs) {
-        lfo_inc_   = p.mod_hz / fs;
-        lfo_depth_ = p.mod_ms * 0.001f * fs;
+        chaos_     = p.chaos;
+        mod_depth_ = p.mod_ms * 0.001f * fs;
+        // LFO rates spread by φ^(k/7) at chaos=1, all identical at chaos=0.
+        static const float kLfoRatios[8] = {
+            1.0000f, 1.0712f, 1.1474f, 1.2289f,
+            1.3163f, 1.4100f, 1.5103f, 1.6180f
+        };
+        for (int k = 0; k < 8; ++k) {
+            float ratio = 1.f + p.chaos * (kLfoRatios[k] - 1.f);
+            lfo_inc_[k] = p.mod_hz * ratio / fs;
+        }
     }
 
-    // Advances the phase and recomputes all 8 modulation offsets (samples).
-    // Eight equally-spaced taps: mod_[0..3] = L diffusers + long delay,
-    // mod_[4..7] = R diffusers + long delay.
-    //
-    // `stride` is how many sample periods this call represents.  lfo_inc_ is a
-    // per-sample increment, so the per-sample path passes 1 and the block-rate
-    // path (UpdateBlock — firmware and the TUI) passes the block size.  Without
-    // this the block path runs the LFO block_sz times too slow.
+    // Advances 8 independent LFOs and 8 slow chaos oscillators.
+    // mod_[0..3] = L diffusers + long delay, mod_[4..7] = R counterparts.
+    // `stride` is samples per call (1 on the per-sample path, block_sz on
+    // the block-rate path — keeps both paths phase-accurate).
     void _step_lfo(float stride) {
-        lfo_phase_ += lfo_inc_ * stride;
-        while (lfo_phase_ >= 1.f) lfo_phase_ -= 1.f;
-        const float kTwoPi = 2.f * float(M_PI);
-        for (int k = 0; k < 8; ++k)
-            mod_[k] = lfo_depth_ * sinf(kTwoPi * (lfo_phase_ + k * 0.125f));
+        const float kTwoPi    = 2.f * float(M_PI);
+        const float kChaosAmt = 0.6f;  // max ±60 % depth variance per tap
+        for (int k = 0; k < 8; ++k) {
+            lfo_phase_[k] += lfo_inc_[k] * stride;
+            if (lfo_phase_[k] >= 1.f) lfo_phase_[k] -= 1.f;
+            chaos_phase_[k] += chaos_inc_[k] * stride;
+            if (chaos_phase_[k] >= 1.f) chaos_phase_[k] -= 1.f;
+            float depth = mod_depth_ * fmaxf(0.f, 1.f + chaos_ * kChaosAmt
+                                                 * sinf(kTwoPi * chaos_phase_[k]));
+            mod_[k] = depth * sinf(kTwoPi * lfo_phase_[k]);
+        }
     }
 
     DelayLine    dlL_[3], dlR_[3];
@@ -181,7 +200,12 @@ private:
     DcBlock      dcL_, dcR_;
     float        fbL_ = 0.f, fbR_ = 0.f;
     float        fb_gain_ = 0.5f;
-    float        lfo_phase_ = 0.f, lfo_inc_ = 0.f, lfo_depth_ = 0.f;
+    float        lfo_phase_[8]   = {};
+    float        lfo_inc_[8]     = {};
+    float        chaos_phase_[8] = {};
+    float        chaos_inc_[8]   = {};
+    float        chaos_          = 0.f;
+    float        mod_depth_      = 0.f;
     float        block_sz_  = 48.f;
     float        mod_[8]     = {};
     float        mod_inc_[8] = {};

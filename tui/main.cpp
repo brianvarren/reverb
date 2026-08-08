@@ -121,6 +121,7 @@ static void build_rows(Ui& ui) {
     row_header("MODULATION");
     row_param(kP_mod_hz);
     row_param(kP_mod_ms);
+    row_param(kP_chaos);
 
     row_header("EQ");
     row_param(kP_dmp_eq);

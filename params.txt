@@ -9,6 +9,7 @@ rt60_s      = 3.300000    # RT60 — s
 bloom       = 3.140000    # Bloom — x
 mod_hz      = 0.500000    # Mod rate — Hz
 mod_ms      = 1.500000    # Mod depth — ms
+chaos       = 0.000000    # Chaos — (0=locked LFOs, 1=max spread+drift)
 dmp_eq      = 0.000000    # EQ — (-1=dark, 0=flat, +1=thin)
 el_mix      = 0.550000    # Early/Late
 dw_mix      = 0.500000    # Dry/Wet
