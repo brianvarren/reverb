@@ -497,8 +497,11 @@ int main(int argc, char** argv) {
         {
             const float cpu = g_eng.cpu_load() * 100.f;
             const int   ovr = g_eng.overruns();
+#ifndef VERB_GIT_VERSION
+#define VERB_GIT_VERSION "dev"
+#endif
             attron(A_BOLD);
-            mvprintw(0, 1, "verb tuner  ·  %u Hz  ·  %u fr  ·  CPU %.0f%%  ·  %s",
+            mvprintw(0, 1, "verb  " VERB_GIT_VERSION "  ·  %u Hz  ·  %u fr  ·  CPU %.0f%%  ·  %s",
                      rate, period, cpu, dev.playback.name);
             attroff(A_BOLD);
             // Rate mismatch: driver gave us something different from what we asked for.
