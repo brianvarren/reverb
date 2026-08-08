@@ -26,6 +26,7 @@ public:
     void Init(float* buf, size_t size_pow2, float fs, size_t block_size = 48) {
         dl_.Init(buf, size_pow2);
         smoother_.SetTC(0.050f, float(block_size) / fs);
+        smoother_.SetMaxStep(1.0f);  // ≤ ~2% Doppler shift/block; large jumps glide
     }
 
     // Hard-clamped to |g| < 0.95 (stability requirement).
@@ -43,10 +44,9 @@ public:
     // Snap delay immediately (call in Init path to avoid boot ramp).
     void SnapDelay(float d_samples) { smoother_.Reset(d_samples); d_ = d_samples; }
 
-    // Per-sample. Read(d-1) → actual loop delay of d samples. Read before write.
+    // Per-sample. Read4pt(d-1) → actual loop delay of d samples. Read before write.
     float Process(float x) {
-        size_t rd = (d_ >= 1.f) ? size_t(d_) - 1 : 0;
-        float  v  = shelf_.Process(dl_.Read(rd));
+        float  v  = shelf_.Process(dl_.Read4pt(d_ - 1.f));
         float  w  = x + g_ * v;
         dl_.Write(w);
         return v - g_ * w;

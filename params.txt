@@ -1,15 +1,17 @@
-predelay_ms = 10.000000   # Pre-delay — ms
-pd_sym      = 0.300000    # Pre-delay spread — ms²
-er_sz       = 58.600000   # Early size — semi
-er_sym      = 2.000000    # Early spread — semi
-er_dffs     = 0.500000    # Early diffusion
-lt_sz       = 24.000000   # Late size — semi
-lt_theta    = 0.785398    # Late scatter — rad (pi/4 = max)
-rt60_s      = 3.300000    # RT60 — s
-bloom       = 3.140000    # Bloom — x
-mod_hz      = 0.500000    # Mod rate — Hz
-mod_ms      = 1.500000    # Mod depth — ms
-chaos       = 0.000000    # Chaos — (0=locked LFOs, 1=max spread+drift)
-dmp_eq      = 0.000000    # EQ — (-1=dark, 0=flat, +1=thin)
-el_mix      = 0.550000    # Early/Late
-dw_mix      = 0.500000    # Dry/Wet
+# verb parameter file — written by verb_tui
+
+predelay_ms = 0.937736    # Pre-delay — ms
+pd_sym      = 5.052258    # Pre-delay spread — ms
+er_sz       = 12.000000   # Early size — semi
+er_sym      = 2.360000    # Early spread — semi
+er_dffs     = 0.585500    # Early diffusion
+lt_sz       = 0.960018    # Late size — semi
+lt_theta    = 0.416261    # Late scatter — rad
+rt60_s      = 1.026790    # RT60 — s
+bloom       = 11.764987   # Bloom — x
+mod_hz      = 1.315130    # Mod rate — Hz
+mod_ms      = 0.100000    # Mod depth — ms
+chaos       = 0.940000    # Chaos
+dmp_eq      = -0.040000   # EQ
+el_mix      = 1.000000    # Early/Late
+dw_mix      = 1.000000    # Dry/Wet

@@ -13,8 +13,17 @@ inline float clampf(float x, float lo, float hi) {
 }
 
 struct Smoother {
-    float y = 0.f, a = 1.f;
+    float y = 0.f, a = 1.f, max_step = 1e9f;
     void SetTC(float tc_s, float block_dt) { a = 1.f - expf(-block_dt / tc_s); }
-    float Process(float target) { y += a * (target - y); return y; }
+    // Clamp the per-block step so large jumps become a constant-rate pitch glide
+    // rather than an exponential lurch. No effect when not set (default = inf).
+    void SetMaxStep(float s) { max_step = s; }
+    float Process(float target) {
+        float delta = a * (target - y);
+        if (delta >  max_step) delta =  max_step;
+        if (delta < -max_step) delta = -max_step;
+        y += delta;
+        return y;
+    }
     void Reset(float v) { y = v; }
 };

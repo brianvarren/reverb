@@ -110,11 +110,15 @@ public:
         aL = chainL_.Process(aL);
         aR = chainR_.Process(aR);
 
-        outL = longL_.Read4pt(dL_[3] + mod_[3]);  longL_.Write(aL);
-        outR = longR_.Read4pt(dR_[3] + mod_[7]);  longR_.Write(aR);
+        float rawL = longL_.Read4pt(dL_[3] + mod_[3]);  longL_.Write(aL);
+        float rawR = longR_.Read4pt(dR_[3] + mod_[7]);  longR_.Write(aR);
+        outL = (rawL + longL_.Read4pt(dL_[3] * 0.382f + mod_[3])
+                     + longL_.Read4pt(dL_[3] * 0.618f + mod_[3])) * (1.f/3.f);
+        outR = (rawR + longR_.Read4pt(dR_[3] * 0.382f + mod_[7])
+                     + longR_.Read4pt(dR_[3] * 0.618f + mod_[7])) * (1.f/3.f);
 
-        fbL_ = dcL_.Process(outL) * fb_gain_;
-        fbR_ = dcR_.Process(outR) * fb_gain_;
+        fbL_ = dcL_.Process(rawL) * fb_gain_;
+        fbR_ = dcR_.Process(rawR) * fb_gain_;
     }
 
     float fb_gain()              const { return fb_gain_; }

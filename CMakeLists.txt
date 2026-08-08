@@ -46,6 +46,17 @@ if(CURSES_FOUND)
         endif()
     endif()
 
+    # Bake the git version into the binary at build time.
+    execute_process(
+        COMMAND git describe --tags --always --dirty
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE VERB_GIT_VERSION
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    if(NOT VERB_GIT_VERSION)
+        set(VERB_GIT_VERSION "unknown")
+    endif()
+
     find_package(Threads REQUIRED)
     add_executable(verb_tui tui/main.cpp)
     target_link_libraries(verb_tui PRIVATE
@@ -53,6 +64,8 @@ if(CURSES_FOUND)
     target_include_directories(verb_tui PRIVATE
         ${CMAKE_SOURCE_DIR}/tui ${CMAKE_SOURCE_DIR}/host ${CURSES_INCLUDE_DIRS})
     target_compile_options(verb_tui PRIVATE -O2 -Wall -Wextra)
+    target_compile_definitions(verb_tui PRIVATE
+        VERB_GIT_VERSION="${VERB_GIT_VERSION}")
     if(CURSES_HAVE_NCURSESW_NCURSES_H OR CURSES_NEED_WIDE)
         target_compile_definitions(verb_tui PRIVATE VERB_TUI_WIDE)
     endif()
