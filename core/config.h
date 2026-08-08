@@ -5,9 +5,9 @@
 // All must be powers of two (DelayLine uses bitmask addressing).
 //
 // Sizing rationale (@ 48 kHz):
-//   kBufEarly  16384 = 341 ms  — covers predelay up to ~300 ms (size=1)
-//   kBufDiff    8192 = 170 ms  — covers lt_sz diff taps at szL = lt_sz − 2.5
-//   kBufLong   16384 = 341 ms  — covers lt_sz long delay + full lt_sym range
+//   kBufEarly  16384 = 341 ms  — covers predelay up to ~47 ms (size=1) + pd_sym
+//   kBufDiff   32768 = 682 ms  — lt_sz diffuser taps at szL+3 = -23.5 → ~23k samples
+//   kBufLong   32768 = 682 ms  — lt_sz long delay at szL = -26.5 → ~27k samples
 static constexpr size_t kBufEarly = 16384;
-static constexpr size_t kBufDiff  =  8192;
-static constexpr size_t kBufLong  = 16384;
+static constexpr size_t kBufDiff  = 32768;
+static constexpr size_t kBufLong  = 32768;

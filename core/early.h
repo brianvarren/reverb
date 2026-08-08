@@ -81,7 +81,7 @@ private:
     }
 
     void _apply_params(const Params& p, float fs, bool snap) {
-        const float szL = p.er_sz - p.er_sym;  // er_sym baked at 2.0 in Params
+        const float szL = p.er_sz - p.er_sym;
         const float szR = p.er_sz + p.er_sym;
         const float g   = clampf(p.er_dffs, -0.949f, 0.949f);
         constexpr float kHpPitch = 108.f, kLpPitch = 36.f;

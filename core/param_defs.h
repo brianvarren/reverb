@@ -91,27 +91,30 @@ struct Params {
     VERB_PARAM_LIST(X)
 #undef X
 
-    // Derived from size — do not set directly; call Derive() after changing size.
-    float predelay_ms = 10.1f;  // sqrt(0.033 × 2000) + 2
-    float er_sz       = 58.6f;  // 60 − (0.033 × 42)
-    float er_dffs     =  0.18f; // sqrt(0.033 × 0.96)
-    float lt_sz       = 46.6f;  // 48 − (0.033 × 42)
-    float rt60_s      =  3.96f; // 0.033 × 120
-    float mod_hz      =  0.66f; // 0.033 × 20
-    float mod_ms      =  0.66f; // 0.033 × 20
+    // Derived from size via original Reaktor formulas (S = size × 100).
+    // Do not set directly; call Derive() after changing size.
+    float predelay_ms = 10.1f;   // (sqrt(S × 2e-5) + 0.002) × 1000   @ size=0.033
+    float er_sz       = 58.6f;   // 60 − S × 0.42
+    float er_sym      =  0.10f;  // sqrt(S × 0.003)  — stereo spread in semitones
+    float er_dffs     =  0.13f;  // sqrt(S × 0.005)  — allpass coefficient
+    float lt_sz       = 45.6f;   // 48 − S × 0.72
+    float rt60_s      =  3.3f;   // S  (seconds)
+    float mod_hz      =  0.03f;  // S × 0.01  (Hz)
+    float mod_ms      =  0.03f;  // S × 0.01  (ms)
 
-    // Baked stereo symmetry constants — not user-facing, not derived.
-    float er_sym = 2.0f;  // ±2 semi between early L and R chains
+    // Baked stereo symmetry constant — not derived.
     float lt_sym = 2.5f;  // ±2.5 semi between late L and R loop
 
     void Derive() {
-        predelay_ms = sqrtf(size * 2000.f) + 2.f;
-        er_sz       = 60.f - (size * 42.f);
-        er_dffs     = sqrtf(size * 0.96f);
-        lt_sz       = 48.f - (size * 42.f);
-        rt60_s      = fmaxf(size * 120.f, 0.05f);
-        mod_hz      = fmaxf(size * 20.f, 0.005f);
-        mod_ms      = size * 20.f;
+        const float S = size * 100.f;
+        predelay_ms = (sqrtf(S * 2e-05f) + 0.002f) * 1000.f;
+        er_sz       = 60.f  - S * 0.42f;
+        er_sym      = sqrtf(S * 0.003f);
+        er_dffs     = sqrtf(S * 0.005f);
+        lt_sz       = 48.f  - S * 0.72f;
+        rt60_s      = fmaxf(S, 0.05f);
+        mod_hz      = fmaxf(S * 0.01f, 0.005f);
+        mod_ms      = S * 0.01f;
     }
 };
 
