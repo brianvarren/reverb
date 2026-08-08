@@ -47,6 +47,13 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     X(pd_sym,  "pd_sym",  0.3f,  0.f, 100.f, kSq,  "ms", "Pre-delay spread") \
                                                                                \
     /* ── LATE SECTION ───────────────────────────────────────────────────── */ \
+    /* lt_sz  [−24 – 48 semi, linear in pitch]                               */ \
+    /* Base pitch of the late loop delay lines.  Lower pitch = longer delays.*/ \
+    /* 48 → ~370 samples (chamber).  −24 → ~27k samples (vast drone).       */ \
+    /* Derived from Size via 48 − (S × 0.72); expose as a knob to decouple  */ \
+    /* room size from decay time when needed.                                */ \
+    X(lt_sz,   "lt_sz",   45.6f, -24.f, 48.f, kLin, "semi", "Late size"   ) \
+                                                                               \
     /* lt_theta  [0 – π/4 rad, linear]                                       */ \
     /* Rotation angle in the 2×2 orthogonal diffuser before each delay read. */ \
     /* θ = 0: identity — echoes, no diffusion.                               */ \
@@ -55,11 +62,6 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     X(lt_theta,"lt_theta",0.7853982f, 0.f, 0.7853982f, kLin, "rad", "Late scatter") \
                                                                                \
     /* ── DECAY ──────────────────────────────────────────────────────────── */ \
-    /* rt60_s  [0.05 – 120 s, exponential]                                   */ \
-    /* Target reverberation time fed into the fb_gain formula.               */ \
-    /* Decoupled from Size so large rooms can have short or long tails.      */ \
-    X(rt60_s,  "rt60_s",  3.3f,  0.05f, 120.f, kExp, "s", "RT60"          ) \
-                                                                               \
     /* bloom  [0.25 – 12×, linear]                                           */ \
     /* Multiplier on the effective RT60 in the fb_gain formula.              */ \
     /* At bloom > 1 the tail grows before it fades — the SMD swell.         */ \
@@ -102,7 +104,7 @@ struct Params {
     float er_sz       = 58.6f;   // 60 − S × 0.42
     float er_sym      =  0.10f;  // sqrt(S × 0.003)  — stereo spread in semitones
     float er_dffs     =  0.13f;  // sqrt(S × 0.005)  — allpass coefficient
-    float lt_sz       = 45.6f;   // 48 − S × 0.72
+    float rt60_s      =  3.3f;   // S  (seconds)
     float mod_hz      =  0.03f;  // S × 0.01  (Hz)
     float mod_ms      =  0.03f;  // S × 0.01  (ms)
 
@@ -115,7 +117,7 @@ struct Params {
         er_sz       = 60.f  - S * 0.42f;
         er_sym      = sqrtf(S * 0.003f);
         er_dffs     = sqrtf(S * 0.005f);
-        lt_sz       = 48.f  - S * 0.72f;
+        rt60_s      = fmaxf(S, 0.05f);
         mod_hz      = fmaxf(S * 0.01f, 0.005f);
         mod_ms      = S * 0.01f;
     }
