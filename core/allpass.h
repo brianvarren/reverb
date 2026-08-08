@@ -45,12 +45,15 @@ public:
     void SnapDelay(float d_samples) { smoother_.Reset(d_samples); d_ = d_samples; }
 
     // Per-sample. Read4pt(d-1) → actual loop delay of d samples. Read before write.
-    float Process(float x) {
-        float  v  = shelf_.Process(dl_.Read4pt(d_ - 1.f));
+    // mod offsets the read position (LFO modulation in the late diffusers).
+    float Process(float x, float mod = 0.f) {
+        float  v  = shelf_.Process(dl_.Read4pt(d_ - 1.f + mod));
         float  w  = x + g_ * v;
         dl_.Write(w);
         return v - g_ * w;
     }
+
+    float current_delay() const { return d_; }
 
 private:
     DelayLine dl_;

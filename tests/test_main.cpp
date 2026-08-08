@@ -434,10 +434,11 @@ static Params flat_late_params(float rt60_s, float lt_sz = 24.f) {
     Params p;
     // Set derived fields directly — Late is driven standalone, no Reverb::UpdateBlock
     p.lt_sz   = lt_sz;
-    p.lt_sym  = 0.f;   // override baked 2.5: symmetric → L==R, cleaner T60 read
+    p.lt_sym  = 0.f;    // override baked 2.5: symmetric → L==R, cleaner T60 read
     p.rt60_s  = rt60_s;
-    p.bloom   = 1.f;   // honest T60 with correct D sum
-    p.dmp_eq  = 0.f;   // flat shelves: dmp_eq=0 → hb=0dB, lb=0dB
+    p.bloom   = 1.f;    // honest T60 with correct D sum
+    p.dmp_eq  = 0.f;    // flat shelves: dmp_eq=0 → hb=0dB, lb=0dB
+    p.lt_dffs = 0.f;    // pure delay: allpass hidden storage breaks the fb_gain formula
     return p;
 }
 

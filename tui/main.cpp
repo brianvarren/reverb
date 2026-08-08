@@ -113,6 +113,7 @@ static void build_rows(Ui& ui) {
     row_header("LATE");
     row_param(kP_lt_sz);
     row_param(kP_lt_theta);
+    row_param(kP_lt_dffs);
 
     row_header("DECAY");
     row_param(kP_rt60_s);

@@ -1,4 +1,5 @@
 #pragma once
+#include "allpass.h"
 #include "delay.h"
 #include "params.h"
 #include "rotation.h"
@@ -39,8 +40,8 @@ public:
         float blk_dt = float(block_sz) / fs;
         block_sz_ = float(block_sz);
         for (int k = 0; k < 3; ++k) {
-            dlL_[k].Init(bufs[k],     diff_sz);
-            dlR_[k].Init(bufs[k + 3], diff_sz);
+            dlL_[k].Init(bufs[k],     diff_sz, fs, block_sz);
+            dlR_[k].Init(bufs[k + 3], diff_sz, fs, block_sz);
         }
         longL_.Init(bufs[6], long_sz);
         longR_.Init(bufs[7], long_sz);
@@ -65,10 +66,12 @@ public:
     void SnapParams(const Params& p, float fs) {
         rot_.SetAngle(p.lt_theta);
         _compute_targets(p, fs);
-        for (int k = 0; k < 4; ++k) {
-            smL_[k].Reset(tgtL_[k]);  dL_[k] = tgtL_[k];
-            smR_[k].Reset(tgtR_[k]);  dR_[k] = tgtR_[k];
+        for (int k = 0; k < 3; ++k) {
+            dlL_[k].SnapDelay(tgtL_[k]);  dL_[k] = tgtL_[k];
+            dlR_[k].SnapDelay(tgtR_[k]);  dR_[k] = tgtR_[k];
         }
+        smL_[3].Reset(tgtL_[3]);  dL_[3] = tgtL_[3];
+        smR_[3].Reset(tgtR_[3]);  dR_[3] = tgtR_[3];
         _update_shelves(p, fs);
         _update_fb(fs, p.rt60_s, p.bloom);
         _update_lfo(p, fs);
@@ -79,10 +82,12 @@ public:
     void UpdateBlock(const Params& p, float fs) {
         rot_.SetAngle(p.lt_theta);
         _compute_targets(p, fs);
-        for (int k = 0; k < 4; ++k) {
-            dL_[k] = smL_[k].Process(tgtL_[k]);
-            dR_[k] = smR_[k].Process(tgtR_[k]);
+        for (int k = 0; k < 3; ++k) {
+            dlL_[k].AdvanceDelay(tgtL_[k]);  dL_[k] = dlL_[k].current_delay();
+            dlR_[k].AdvanceDelay(tgtR_[k]);  dR_[k] = dlR_[k].current_delay();
         }
+        dL_[3] = smL_[3].Process(tgtL_[3]);
+        dR_[3] = smR_[3].Process(tgtR_[3]);
         _update_shelves(p, fs);
         _update_fb(fs, p.rt60_s, p.bloom);
         _update_lfo(p, fs);
@@ -118,8 +123,8 @@ public:
 
         for (int k = 0; k < 3; ++k) {
             rot_.Process(aL, aR);
-            float ra = dlL_[k].Read4pt(dL_[k] + mod_[k]);      dlL_[k].Write(aL);
-            float rb = dlR_[k].Read4pt(dR_[k] + mod_[k + 4]);  dlR_[k].Write(aR);
+            float ra = dlL_[k].Process(aL, mod_[k]);
+            float rb = dlR_[k].Process(aR, mod_[k + 4]);
             aL = shelfL_[k].Process(ra);
             aR = shelfR_[k].Process(rb);
         }
@@ -165,6 +170,11 @@ private:
         float hb = db_to_lin(fminf(p.dmp_eq *  18.f,    0.f));
         float lb = db_to_lin(fminf(p.dmp_eq * -25.92f,  0.f));
         for (int k = 0; k < 3; ++k) {
+            // Allpass internal shelf is flat — EQ applied externally by shelfL_/R_.
+            dlL_[k].SetGain(p.lt_dffs);
+            dlL_[k].SetShelf(hf, 1.0f, lf, 1.0f, fs);
+            dlR_[k].SetGain(p.lt_dffs);
+            dlR_[k].SetShelf(hf, 1.0f, lf, 1.0f, fs);
             shelfL_[k].SetParams(hf, hb, lf, lb, fs);
             shelfR_[k].SetParams(hf, hb, lf, lb, fs);
         }
@@ -213,7 +223,7 @@ private:
         }
     }
 
-    DelayLine    dlL_[3], dlR_[3];
+    AllPass      dlL_[3], dlR_[3];
     DelayLine    longL_, longR_;
     DelayLine    injL_, injR_;
     LoopShelf    shelfL_[3], shelfR_[3];

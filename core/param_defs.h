@@ -60,10 +60,17 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* 24 → ~96 ms loop.  6 → ~350 ms loop.  −24 → ~2 s loop.              */ \
     X(lt_sz,      "lt_sz",      24.0f,-24.f,  48.f, kLin, "semi", "Late size"     ) \
                                                                                \
-    /* lt_theta  [0 – π/4 rad, linear]                                       */ \
+    /* lt_theta  [0 – π rad, linear]                                          */ \
     /* Rotation angle in the 2×2 orthogonal diffuser before each delay read. */ \
-    /* θ = 0: no within-stage mixing.  θ = π/4: maximum cross-diffusion.    */ \
-    X(lt_theta,   "lt_theta",    0.7853982f, 0.f, 0.7853982f, kLin, "rad", "Late scatter") \
+    /* θ = 0: identity.  θ = π/4: max cross-mix.  θ = π/2: channel swap.   */ \
+    /* Energy is preserved at all angles (rotation is always unitary).       */ \
+    X(lt_theta,   "lt_theta",    0.7853982f, 0.f, 3.1415927f, kLin, "rad", "Late scatter") \
+                                                                               \
+    /* lt_dffs  [0 – 0.95, linear]                                           */ \
+    /* Allpass coefficient for each late diffuser stage.                     */ \
+    /* 0 = pure delay (current behaviour).  0.7 = rich smearing.            */ \
+    /* Higher values dramatically increase echo density per loop pass.       */ \
+    X(lt_dffs,    "lt_dffs",     0.6f,  0.f,  0.95f, kLin, "",    "Late diffusion") \
                                                                                \
     /* ── DECAY ──────────────────────────────────────────────────────────── */ \
     /* rt60_s  [0.05 – 120 s, exponential]                                   */ \
