@@ -544,17 +544,16 @@ int main(int argc, char** argv) {
         mvhline(y++, 1, ACS_HLINE, COLS - 2);
 
         // ── derived engineering readout ──────────────────────────────────────
-        // Mirrors the arithmetic in core/early.h and core/late.h so you can see
-        // what a pitch value actually means in milliseconds before you commit.
+        // All geometry comes from Params::Derive() — single source of truth.
         const float fs = float(dev.sampleRate);
         char line[512];
+        Params dp;
+        for (int i = 0; i < kParamCount; ++i)
+            *ParamSlot(dp, i) = g_eng.GetParam(i);
+        dp.Derive();
         {
-            // Derive geometry from size (mirrors Params::Derive())
-            const float sz   = g_eng.GetParam(kP_size);
-            const float pdms = sqrtf(sz * 89500.f) + 2.f;
-            const float erSz = 60.f - (sz * 42.f);
-            const float erL  = erSz - 2.0f;   // er_sym baked at 2.0
-            const float erR  = erSz + 2.0f;
+            const float erL  = dp.er_sz - dp.er_sym;
+            const float erR  = dp.er_sz + dp.er_sym;
             const float off[3] = { 8.f, 4.f, 0.f };
             char a[128] = {0}, b[128] = {0};
             for (int i = 0; i < 3; ++i) {
@@ -566,25 +565,22 @@ int main(int argc, char** argv) {
                          pitch_to_samples(erR + off[i], fs) * 1000.f / fs);
                 strncat(b, t, sizeof(b) - strlen(b) - 1);
             }
-            const float pdSym = g_eng.GetParam(kP_pd_sym);
             snprintf(line, sizeof line,
                      "EARLY  predelay %.1f/%.1f ms   allpass L %s ms   R %s ms",
-                     pdms - pdSym, pdms + pdSym, a, b);
+                     dp.predelay_ms - dp.pd_sym, dp.predelay_ms + dp.pd_sym, a, b);
             put(y++, line);
         }
         {
-            const float sz   = g_eng.GetParam(kP_size);
-            const float ltSz = 48.f - (sz * 42.f);
-            const float szL  = ltSz - 2.5f;   // lt_sym baked at 2.5
-            const float szR  = ltSz + 2.5f;
+            const float szL  = dp.lt_sz - dp.lt_sym;
+            const float szR  = dp.lt_sz + dp.lt_sym;
             float D = 0.f;
             for (int k = 0; k < 3; ++k) {
                 const float o = float(9 - 3 * k);
                 D += 0.5f * (pitch_to_samples(szL + o, fs) + pitch_to_samples(szR + o, fs));
             }
             D += 0.5f * (pitch_to_samples(szL, fs) + pitch_to_samples(szR, fs));
-            const float rt = fmaxf(sz * 120.f, 0.05f);
-            const float bl = g_eng.GetParam(kP_bloom);
+            const float rt = dp.rt60_s;
+            const float bl = dp.bloom;
             float fb = powf(10.f, -3.f * (D / fs) / (rt * bl));
             const bool capped = fb > 0.995f;
             if (capped) fb = 0.995f;
