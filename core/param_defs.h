@@ -30,106 +30,26 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
 
 #define VERB_PARAM_LIST(X)                                                     \
                                                                                \
-    /* ── PREDELAY ───────────────────────────────────────────────────────── */ \
-    /* predelay_ms  [0.5 – 300 ms, exponential]                              */ \
-    X(predelay_ms,"predelay_ms", 10.f,  0.5f, 300.f, kExp, "ms", "Pre-delay"      ) \
-                                                                               \
-    /* pd_sym  [0 – 100 ms², squared]                                        */ \
-    /* Offsets L and R predelay by ±pd_sym:                                  */ \
-    /*   T_L = predelay_ms − pd_sym,  T_R = predelay_ms + pd_sym            */ \
-    /* Squared mapping keeps the useful 0–5 ms range in the bottom half.     */ \
-    X(pd_sym,     "pd_sym",      0.3f,  0.f,  100.f, kSq,  "ms", "Pre-delay spread") \
-                                                                               \
-    /* ── EARLY ──────────────────────────────────────────────────────────── */ \
-    /* er_sz  [12 – 66 semi, linear in pitch]                                */ \
-    /* Base pitch of the three early allpass stages.  Lower = longer taps.  */ \
-    X(er_sz,      "er_sz",      58.6f, 12.f,  66.f, kLin, "semi", "Early size"    ) \
-                                                                               \
-    /* er_sym  [0 – 6 semi, linear]                                          */ \
-    /* L/R pitch offset: szL = er_sz − er_sym, szR = er_sz + er_sym.        */ \
-    X(er_sym,     "er_sym",      2.0f,  0.f,   6.f, kLin, "semi", "Early spread"  ) \
-                                                                               \
-    /* er_dffs  [0 – 0.95, linear]                                           */ \
-    /* Allpass coefficient for the early diffusion stages.                   */ \
-    /* 0 = bypass (pure tapped delay), 0.95 = maximum smear.                */ \
-    X(er_dffs,    "er_dffs",     0.5f,  0.f,  0.95f, kLin, "",    "Early diffusion") \
-                                                                               \
     /* ── LATE ───────────────────────────────────────────────────────────── */ \
     /* lt_sz  [−24 – 48 semi, linear in pitch]                               */ \
     /* Base pitch of the late loop delay lines.  Lower pitch = longer delays.*/ \
     /* 24 → ~96 ms loop.  6 → ~350 ms loop.  −24 → ~2 s loop.              */ \
-    X(lt_sz,      "lt_sz",      24.0f,-24.f,  48.f, kLin, "semi", "Late size"     ) \
-                                                                               \
-    /* lt_theta  [0 – π rad, linear]                                          */ \
-    /* Rotation angle in the 2×2 orthogonal diffuser before each delay read. */ \
-    /* θ = 0: identity.  θ = π/4: max cross-mix.  θ = π/2: channel swap.   */ \
-    /* Energy is preserved at all angles (rotation is always unitary).       */ \
-    X(lt_theta,   "lt_theta",    0.7853982f, 0.f, 3.1415927f, kLin, "rad", "Late scatter") \
-                                                                               \
-    /* lt_dffs  [0 – 0.95, linear]                                           */ \
-    /* Allpass coefficient for each late diffuser stage.                     */ \
-    /* 0 = pure delay (current behaviour).  0.7 = rich smearing.            */ \
-    /* Higher values dramatically increase echo density per loop pass.       */ \
-    X(lt_dffs,    "lt_dffs",     0.6f,  0.f,  0.95f, kLin, "",    "Late diffusion") \
+    X(lt_sz,      "lt_sz",      24.0f,-24.f,  48.f, kLin, "semi", "Size"          ) \
                                                                                \
     /* ── DECAY ──────────────────────────────────────────────────────────── */ \
-    /* rt60_s  [0.05 – 120 s, exponential]                                   */ \
-    X(rt60_s,     "rt60_s",      3.3f,  0.05f,120.f, kExp, "s",   "RT60"          ) \
-                                                                               \
-    /* bloom  [0.25 – 12×, linear]                                           */ \
-    /* Multiplier on the effective RT60 in the fb_gain formula.              */ \
-    /* > 1: tail grows before it fades (SMD swell).  1: standard decay.     */ \
-    X(bloom,      "bloom",       3.14f, 0.25f, 12.f, kLin, "x",   "Bloom"         ) \
-                                                                               \
-    /* ── MODULATION ─────────────────────────────────────────────────────── */ \
-    /* mod_hz  [0.005 – 5 Hz, exponential]  — LFO rate                      */ \
-    X(mod_hz,     "mod_hz",      0.5f,  0.005f, 5.f, kExp, "Hz",  "Mod rate"      ) \
-                                                                               \
-    /* mod_ms  [0 – 5 ms, linear]  — LFO depth (peak delay swing)           */ \
-    X(mod_ms,     "mod_ms",      1.5f,  0.f,   5.f, kLin, "ms",  "Mod depth"     ) \
-                                                                               \
-    /* chaos  [0 – 1, linear]                                                */ \
-    /* At 0: all 8 LFOs locked to the same rate (mod_hz), equally-spaced.   */ \
-    /* At 1: LFO rates spread φ^(k/7) apart (1× – 1.618×), plus a slow     */ \
-    /* per-tap noise oscillator drifts each tap's depth ±60%.               */ \
-    /* Creates non-periodic modulation that sounds alive and never repeats.  */ \
-    X(chaos,      "chaos",       0.f,   0.f,   1.f, kLin, "",    "Chaos"         ) \
-                                                                               \
-    /* sat  [0 – 1, linear]                                                     */ \
-    /* Soft saturation (tanh) applied once per loop pass, before the long       */ \
-    /* delay write.  In-loop tanh is a contraction (slope ≤ 1) so it can never */ \
-    /* increase loop gain — the feedback is unconditionally stable at all sat.  */ \
-    /* Each pass generates harmonics from whatever is circulating; those get    */ \
-    /* diffused by the rotation/allpass stages on the next pass, building a     */ \
-    /* self-enriching overtone tail independent of the source material.         */ \
-    /* drive = 1 + sat × 4  →  range [1, 5]; makeup gain compensates the        */ \
-    /* gain reduction so the tail level tracks fb_gain as intended.             */ \
-    X(sat,        "sat",         0.f,   0.f,   1.f, kLin, "",    "Harmonics"     ) \
-                                                                               \
-    /* ── IN-LOOP EQ ─────────────────────────────────────────────────────── */ \
-    /* Two-band shelf applied on every pass of early and late.               */ \
-    /* Gains must be ≤ 0 dB (LoopShelf assertion) for loop stability.       */ \
-    /* LP shelf: frequencies BELOW lp_hz get gain lp_db.                    */ \
-    /* HP shelf: frequencies ABOVE hp_hz get gain hp_db.                    */ \
-    X(lp_hz,  "lp_hz",    65.f,   20.f, 2000.f, kExp, "Hz", "Loop LP freq"  ) \
-    X(lp_db,  "lp_db",     0.f,  -60.f,    0.f, kLin, "dB", "Loop LP gain"  ) \
-    X(hp_hz,  "hp_hz",  4186.f,  500.f,20000.f, kExp, "Hz", "Loop HP freq"  ) \
-    X(hp_db,  "hp_db",     0.f,  -60.f,    0.f, kLin, "dB", "Loop HP gain"  ) \
+    /* Macro knob: 0=short (rt60=0.05s, bloom=0.25, el_mix=0),              */ \
+    /*             1=long  (rt60=120s,  bloom=12,   el_mix=1).              */ \
+    /* Derive() linearly interpolates rt60_s, bloom, el_mix.                */ \
+    X(decay,      "decay",       0.3f,  0.f,   1.f, kLin, "",    "Decay"         ) \
                                                                                \
     /* ── OUTPUT FILTER ──────────────────────────────────────────────────── */ \
     /* Four-pole Moog ladder LP + first-order HP → parametric bandpass.      */ \
-    /* LP cutoff = out_freq × 2^(out_width/2)                                */ \
-    /* HP cutoff = out_freq / 2^(out_width/2)                                */ \
-    /* At width=10 both cutoffs are outside the audible range → flat.        */ \
-    X(out_freq,  "out_freq",  1000.f,   80.f,18000.f, kExp, "Hz",  "Out center" ) \
-    X(out_width, "out_width",   10.f,   0.5f,   10.f, kLin, "oct", "Out width"  ) \
+    /* LP cutoff = out_freq × 2^(out_width/2)    out_width baked at 6.28    */ \
+    X(out_freq,  "out_freq",  1000.f,   80.f,18000.f, kExp, "Hz",  "Tone"       ) \
                                                                                \
-    /* ── CROSSFADES ─────────────────────────────────────────────────────── */ \
-    /* 0 = early only, 1 = late only.                                        */ \
-    X(el_mix,     "el_mix",      0.55f, 0.f,   1.f, kLin, "",    "Early/Late"    ) \
-                                                                               \
+    /* ── MIX ────────────────────────────────────────────────────────────── */ \
     /* 0 = dry only, 1 = full wet (send/return use).                         */ \
-    X(dw_mix,     "dw_mix",      0.5f,  0.f,   1.f, kLin, "",    "Dry/Wet"       )
+    X(dw_mix,     "dw_mix",      0.5f,  0.f,   1.f, kLin, "",    "Mix"           )
 
 // ── generated: the struct ────────────────────────────────────────────────────
 
@@ -138,9 +58,33 @@ struct Params {
     VERB_PARAM_LIST(X)
 #undef X
 
-    float lt_sym = 2.5f;  // baked: ±2.5 semi between late L and R loop
+    // ── derived from decay ────────────────────────────────────────────────────
+    float rt60_s = 36.035f;  // 0.05 + decay * 119.95
+    float bloom  = 3.775f;   // 0.25 + decay * 11.75
+    float el_mix = 0.3f;     // decay
 
-    void Derive() {}      // placeholder for future SIZE macro; currently a no-op
+    // ── permanently baked ─────────────────────────────────────────────────────
+    float predelay_ms = 18.0f;
+    float pd_sym      = 5.1f;
+    float er_sz       = 14.2f;
+    float er_sym      = 2.42f;
+    float er_dffs     = 0.576f;
+    float mod_hz      = 0.87f;
+    float mod_ms      = 0.45f;
+    float out_width   = 6.28f;
+    float lt_sym   = 2.5f;
+    float lt_theta = 0.7853982f;
+    float lt_dffs  = 0.494f;
+    float chaos    = 0.94f;
+    float sat      = 0.12f;
+    float hp_hz    = 4186.f;
+    float hp_db    = -0.1f;
+
+    void Derive() {
+        rt60_s = 0.05f + decay * 119.95f;
+        bloom  = 0.25f + decay * 11.75f;
+        el_mix = decay;
+    }
 };
 
 // ── generated: the descriptor table ──────────────────────────────────────────

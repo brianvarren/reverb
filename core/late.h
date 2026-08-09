@@ -51,6 +51,8 @@ public:
             smL_[k].SetTC(0.050f, blk_dt);
             smR_[k].SetTC(0.050f, blk_dt);
         }
+        smL_[3].SetMaxStep(50.f);
+        smR_[3].SetMaxStep(50.f);
         smInj_[0].SetTC(0.050f, blk_dt);
         smInj_[1].SetTC(0.050f, blk_dt);
         // Chaos oscillator rates: 0.01 Hz × φ^(k/2), fixed golden-ratio spread.
@@ -86,8 +88,15 @@ public:
             dlL_[k].AdvanceDelay(tgtL_[k]);  dL_[k] = dlL_[k].current_delay();
             dlR_[k].AdvanceDelay(tgtR_[k]);  dR_[k] = dlR_[k].current_delay();
         }
-        dL_[3] = smL_[3].Process(tgtL_[3]);
-        dR_[3] = smR_[3].Process(tgtR_[3]);
+        {
+            float prev_dL3 = dL_[3], prev_dR3 = dR_[3];
+            dL_[3] = smL_[3].Process(tgtL_[3]);
+            dR_[3] = smR_[3].Process(tgtR_[3]);
+            dL3_inc_ = (dL_[3] - prev_dL3) / block_sz_;
+            dR3_inc_ = (dR_[3] - prev_dR3) / block_sz_;
+            dL_[3] = prev_dL3;
+            dR_[3] = prev_dR3;
+        }
         _update_shelves(p, fs);
         _update_fb(fs, p.rt60_s, p.bloom, p.sat);
         _update_lfo(p, fs);
@@ -110,8 +119,10 @@ public:
             // Host per-sample path: advance LFO every sample, no interpolation needed.
             _step_lfo(1.f);
         } else {
-            // Block path: advance mod by precomputed per-sample increment.
+            // Block path: advance mod and long delay by precomputed per-sample increments.
             for (int k = 0; k < 10; ++k) mod_[k] += mod_inc_[k];
+            dL_[3] += dL3_inc_;
+            dR_[3] += dR3_inc_;
         }
 
         // Modulated injection: LFO-modulated short delay before the cross-coupled sum.
@@ -168,8 +179,8 @@ private:
     void _update_shelves(const Params& p, float fs) {
         float hf = p.hp_hz;
         float hb = db_to_lin(p.hp_db);
-        float lf = p.lp_hz;
-        float lb = db_to_lin(p.lp_db);
+        float lf = 20.f;
+        float lb = 1.f;
         for (int k = 0; k < 3; ++k) {
             // Allpass internal shelf is flat — EQ applied externally by shelfL_/R_.
             dlL_[k].SetGain(p.lt_dffs);
@@ -251,6 +262,7 @@ private:
     Smoother     smInj_[2];
     float        dL_[4] = {}, dR_[4] = {};
     float        tgtL_[4] = {}, tgtR_[4] = {};
+    float        dL3_inc_ = 0.f, dR3_inc_ = 0.f;
     float        d_inj_[2] = {1.f, 1.f};
     DcBlock      dcL_, dcR_;
     float        fbL_ = 0.f, fbR_ = 0.f;

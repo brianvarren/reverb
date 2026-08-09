@@ -101,42 +101,17 @@ static void row_ui(const char* label, float* v, float lo, float hi,
 }
 
 static void build_rows(Ui& ui) {
-    row_header("PREDELAY");
-    row_param(kP_predelay_ms);
-    row_param(kP_pd_sym);
-
-    row_header("EARLY");
-    row_param(kP_er_sz);
-    row_param(kP_er_sym);
-    row_param(kP_er_dffs);
-
     row_header("LATE");
     row_param(kP_lt_sz);
-    row_param(kP_lt_theta);
-    row_param(kP_lt_dffs);
 
     row_header("DECAY");
-    row_param(kP_rt60_s);
-    row_param(kP_bloom);
-
-    row_header("MODULATION");
-    row_param(kP_mod_hz);
-    row_param(kP_mod_ms);
-    row_param(kP_chaos);
-    row_param(kP_sat);
-
-    row_header("IN-LOOP EQ");
-    row_param(kP_lp_hz);
-    row_param(kP_lp_db);
-    row_param(kP_hp_hz);
-    row_param(kP_hp_db);
+    row_param(kP_decay);
 
     row_header("OUTPUT FILTER");
     row_param(kP_out_freq);
-    row_param(kP_out_width);
 
     row_header("MIX");
-    row_param(kP_el_mix); row_param(kP_dw_mix);
+    row_param(kP_dw_mix);
 
     row_header("SOURCE / MONITOR");
     row_ui("Signal",      &ui.gen_type, 0.f, 3.f,     kLin, "",   0, kGenList, 4);
@@ -613,17 +588,13 @@ int main(int argc, char** argv) {
             put(y++, line);
         }
         {
-            const float hp_hz  = g_eng.GetParam(kP_hp_hz);
-            const float hp_db  = g_eng.GetParam(kP_hp_db);
-            const float lp_hz  = g_eng.GetParam(kP_lp_hz);
-            const float lp_db  = g_eng.GetParam(kP_lp_db);
             const float ofreq  = g_eng.GetParam(kP_out_freq);
-            const float owidth = g_eng.GetParam(kP_out_width);
+            constexpr float owidth = 6.28f;
             const float olp    = ofreq * powf(2.f, owidth * 0.5f);
             const float ohp    = ofreq / powf(2.f, owidth * 0.5f);
             snprintf(line, sizeof line,
-                     "EQ     loop HP %.0fHz/%+.1fdB  LP %.0fHz/%+.1fdB    out LP %.0fHz  HP %.0fHz",
-                     hp_hz, hp_db, lp_hz, lp_db, olp, ohp);
+                     "EQ     loop HP 4186Hz/-0.1dB (baked)    out LP %.0fHz  HP %.0fHz",
+                     olp, ohp);
             put(y++, line);
         }
 

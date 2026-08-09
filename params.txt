@@ -1,24 +1,6 @@
 # verb parameter file — written by verb_tui
 
-predelay_ms = 0.937736    # Pre-delay — ms
-pd_sym      = 5.052258    # Pre-delay spread — ms
-er_sz       = 12.000000   # Early size — semi
-er_sym      = 2.360000    # Early spread — semi
-er_dffs     = 0.585500    # Early diffusion
-lt_sz       = 0.240021    # Late size — semi
-lt_theta    = 0.416261    # Late scatter — rad
-lt_dffs     = 0.494000    # Late diffusion
-rt60_s      = 34.541882   # RT60 — s
-bloom       = 11.764999   # Bloom — x
-mod_hz      = 1.315130    # Mod rate — Hz
-mod_ms      = 0.100000    # Mod depth — ms
-chaos       = 0.940000    # Chaos
-sat         = 0.020000    # Harmonics
-lp_hz       = 65.000008   # Loop LP freq — Hz
-lp_db       = 0.000000    # Loop LP gain — dB
-hp_hz       = 4186.000000 # Loop HP freq — Hz
-hp_db       = -0.100000   # Loop HP gain — dB
-out_freq    = 320.657898  # Out center — Hz
-out_width   = 9.905000    # Out width — oct
-el_mix      = 0.710000    # Early/Late
-dw_mix      = 0.650000    # Dry/Wet
+lt_sz       = 3.359987    # Late size — semi
+decay       = 1.000000    # Decay
+out_freq    = 196.944885  # Out center — Hz
+dw_mix      = 0.570000    # Dry/Wet
