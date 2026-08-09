@@ -96,12 +96,22 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     X(chaos,      "chaos",       0.f,   0.f,   1.f, kLin, "",    "Chaos"         ) \
                                                                                \
     /* ── IN-LOOP EQ ─────────────────────────────────────────────────────── */ \
-    /* Single knob driving two baked shelves on every loop pass.             */ \
-    /* Corners baked: HP = pitch 108 (~4186 Hz), LP = pitch 36 (~65 Hz).    */ \
-    /*   hb_dB = clamp(eq × 18,     −∞, 0)   eq < 0 → dark  (HF cut)       */ \
-    /*   lb_dB = clamp(eq × −25.92, −∞, 0)   eq > 0 → thin  (LF cut)       */ \
-    /* Output shelf uses symmetric ±36 dB.  eq = 0: flat.                   */ \
-    X(dmp_eq,     "dmp_eq",      0.f,  -1.f,   1.f, kLin, "",    "EQ"            ) \
+    /* Two-band shelf applied on every pass of early and late.               */ \
+    /* Gains must be ≤ 0 dB (LoopShelf assertion) for loop stability.       */ \
+    /* LP shelf: frequencies BELOW lp_hz get gain lp_db.                    */ \
+    /* HP shelf: frequencies ABOVE hp_hz get gain hp_db.                    */ \
+    X(lp_hz,  "lp_hz",    65.f,   20.f, 2000.f, kExp, "Hz", "Loop LP freq"  ) \
+    X(lp_db,  "lp_db",     0.f,  -60.f,    0.f, kLin, "dB", "Loop LP gain"  ) \
+    X(hp_hz,  "hp_hz",  4186.f,  500.f,20000.f, kExp, "Hz", "Loop HP freq"  ) \
+    X(hp_db,  "hp_db",     0.f,  -60.f,    0.f, kLin, "dB", "Loop HP gain"  ) \
+                                                                               \
+    /* ── OUTPUT FILTER ──────────────────────────────────────────────────── */ \
+    /* Four-pole Moog ladder LP + first-order HP → parametric bandpass.      */ \
+    /* LP cutoff = out_freq × 2^(out_width/2)                                */ \
+    /* HP cutoff = out_freq / 2^(out_width/2)                                */ \
+    /* At width=10 both cutoffs are outside the audible range → flat.        */ \
+    X(out_freq,  "out_freq",  1000.f,   80.f,18000.f, kExp, "Hz",  "Out center" ) \
+    X(out_width, "out_width",   10.f,   0.5f,   10.f, kLin, "oct", "Out width"  ) \
                                                                                \
     /* ── CROSSFADES ─────────────────────────────────────────────────────── */ \
     /* 0 = early only, 1 = late only.                                        */ \

@@ -164,11 +164,10 @@ private:
     }
 
     void _update_shelves(const Params& p, float fs) {
-        constexpr float kHpPitch = 108.f, kLpPitch = 36.f;
-        float hf = pitch_to_hz(kHpPitch);
-        float lf = pitch_to_hz(kLpPitch);
-        float hb = db_to_lin(fminf(p.dmp_eq *  18.f,    0.f));
-        float lb = db_to_lin(fminf(p.dmp_eq * -25.92f,  0.f));
+        float hf = p.hp_hz;
+        float hb = db_to_lin(p.hp_db);
+        float lf = p.lp_hz;
+        float lb = db_to_lin(p.lp_db);
         for (int k = 0; k < 3; ++k) {
             // Allpass internal shelf is flat — EQ applied externally by shelfL_/R_.
             dlL_[k].SetGain(p.lt_dffs);

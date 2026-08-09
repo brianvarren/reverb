@@ -84,11 +84,10 @@ private:
         const float szL = p.er_sz - p.er_sym;
         const float szR = p.er_sz + p.er_sym;
         const float g   = clampf(p.er_dffs, -0.949f, 0.949f);
-        constexpr float kHpPitch = 108.f, kLpPitch = 36.f;
-        const float hf  = pitch_to_hz(kHpPitch);
-        const float hb  = db_to_lin(fminf(p.dmp_eq *  18.f,    0.f));
-        const float lf  = pitch_to_hz(kLpPitch);
-        const float lb  = db_to_lin(fminf(p.dmp_eq * -25.92f,  0.f));
+        const float hf  = p.hp_hz;
+        const float hb  = db_to_lin(p.hp_db);
+        const float lf  = p.lp_hz;
+        const float lb  = db_to_lin(p.lp_db);
         const float offsets[3] = {8.f, 4.f, 0.f};
 
         for (int ch = 0; ch < 2; ++ch) {

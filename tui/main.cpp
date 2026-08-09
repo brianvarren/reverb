@@ -124,8 +124,15 @@ static void build_rows(Ui& ui) {
     row_param(kP_mod_ms);
     row_param(kP_chaos);
 
-    row_header("EQ");
-    row_param(kP_dmp_eq);
+    row_header("IN-LOOP EQ");
+    row_param(kP_lp_hz);
+    row_param(kP_lp_db);
+    row_param(kP_hp_hz);
+    row_param(kP_hp_db);
+
+    row_header("OUTPUT FILTER");
+    row_param(kP_out_freq);
+    row_param(kP_out_width);
 
     row_header("MIX");
     row_param(kP_el_mix); row_param(kP_dw_mix);
@@ -605,15 +612,17 @@ int main(int argc, char** argv) {
             put(y++, line);
         }
         {
-            constexpr float kHpHz = 4186.f, kLpHz = 65.f;  // pitch 108, pitch 36
-            const float eq = g_eng.GetParam(kP_dmp_eq);
-            const float hb_loop = fminf(eq *  18.f,    0.f);
-            const float lb_loop = fminf(eq * -25.92f,  0.f);
-            const float hb_out  = eq *  36.f;
-            const float lb_out  = eq * -36.f;
+            const float hp_hz  = g_eng.GetParam(kP_hp_hz);
+            const float hp_db  = g_eng.GetParam(kP_hp_db);
+            const float lp_hz  = g_eng.GetParam(kP_lp_hz);
+            const float lp_db  = g_eng.GetParam(kP_lp_db);
+            const float ofreq  = g_eng.GetParam(kP_out_freq);
+            const float owidth = g_eng.GetParam(kP_out_width);
+            const float olp    = ofreq * powf(2.f, owidth * 0.5f);
+            const float ohp    = ofreq / powf(2.f, owidth * 0.5f);
             snprintf(line, sizeof line,
-                     "EQ     loop %.0f/%+.1f dB  %.0f/%+.1f dB    out %.0f/%+.1f dB  %.0f/%+.1f dB",
-                     kHpHz, hb_loop, kLpHz, lb_loop, kHpHz, hb_out, kLpHz, lb_out);
+                     "EQ     loop HP %.0fHz/%+.1fdB  LP %.0fHz/%+.1fdB    out LP %.0fHz  HP %.0fHz",
+                     hp_hz, hp_db, lp_hz, lp_db, olp, ohp);
             put(y++, line);
         }
 

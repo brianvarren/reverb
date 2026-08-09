@@ -437,7 +437,8 @@ static Params flat_late_params(float rt60_s, float lt_sz = 24.f) {
     p.lt_sym  = 0.f;    // override baked 2.5: symmetric → L==R, cleaner T60 read
     p.rt60_s  = rt60_s;
     p.bloom   = 1.f;    // honest T60 with correct D sum
-    p.dmp_eq  = 0.f;    // flat shelves: dmp_eq=0 → hb=0dB, lb=0dB
+    p.hp_db   = 0.f;    // flat shelves: 0 dB gain at both shelf corners
+    p.lp_db   = 0.f;
     p.lt_dffs = 0.f;    // pure delay: allpass hidden storage breaks the fb_gain formula
     return p;
 }

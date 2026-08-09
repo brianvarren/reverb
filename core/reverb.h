@@ -1,8 +1,8 @@
 #pragma once
 #include "early.h"
+#include "ladder.h"
 #include "late.h"
 #include "params.h"
-#include "shelf.h"
 #include "util.h"
 #include <cmath>
 
@@ -39,7 +39,7 @@ public:
         p.Derive();
         early_.SnapParams(p, fs_);
         late_ .SnapParams(p, fs_);
-        _update_out_shelf(p);
+        _update_out_filter(p);
         _update_xfade(p);
     }
 
@@ -48,7 +48,7 @@ public:
         p.Derive();
         early_.UpdateBlock(p, fs_);
         late_ .UpdateBlock(p, fs_);
-        _update_out_shelf(p);
+        _update_out_filter(p);
         _update_xfade(p);
     }
 
@@ -62,8 +62,8 @@ public:
         float wetL = el_cos_ * eL + el_sin_ * ltL;
         float wetR = el_cos_ * eR + el_sin_ * ltR;
 
-        wetL = out_shelfL_.Process(wetL);
-        wetR = out_shelfR_.Process(wetR);
+        wetL = outHpL_.Process(outLadderL_.Process(wetL));
+        wetR = outHpR_.Process(outLadderR_.Process(wetR));
 
         // Equal-power D/W
         outL = dw_cos_ * inL + dw_sin_ * wetL;
@@ -71,14 +71,13 @@ public:
     }
 
 private:
-    void _update_out_shelf(const Params& p) {
-        constexpr float kHpPitch = 108.f, kLpPitch = 36.f;
-        float hf = pitch_to_hz(kHpPitch);
-        float lf = pitch_to_hz(kLpPitch);
-        float hb = db_to_lin(p.dmp_eq *  36.f);  // symmetric, unrestricted, can boost
-        float lb = db_to_lin(p.dmp_eq * -36.f);
-        out_shelfL_.SetParams(hf, hb, lf, lb, fs_);
-        out_shelfR_.SetParams(hf, hb, lf, lb, fs_);
+    void _update_out_filter(const Params& p) {
+        float lp_hz = p.out_freq * powf(2.f, p.out_width * 0.5f);
+        float hp_hz = p.out_freq / powf(2.f, p.out_width * 0.5f);
+        outLadderL_.SetParams(lp_hz, 0.f, fs_);
+        outLadderR_.SetParams(lp_hz, 0.f, fs_);
+        outHpL_.SetHP(hp_hz, fs_);
+        outHpR_.SetHP(hp_hz, fs_);
     }
 
     void _update_xfade(const Params& p) {
@@ -92,7 +91,8 @@ private:
     float        fs_ = 48000.f;
     Early        early_;
     Late         late_;
-    OutputShelf  out_shelfL_, out_shelfR_;
+    Ladder       outLadderL_, outLadderR_;
+    HP1          outHpL_, outHpR_;
     float        el_cos_ = 0.f, el_sin_ = 1.f;
     float        dw_cos_ = 0.f, dw_sin_ = 1.f;
 };
