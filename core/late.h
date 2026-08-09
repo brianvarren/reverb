@@ -7,11 +7,13 @@
 #include "util.h"
 #include <cmath>
 
-// First-order DC-blocking highpass.  y[n] = x[n] - x[n-1] + 0.995*y[n-1]
+// First-order DC-blocking highpass.  y[n] = x[n] - x[n-1] + R*y[n-1]
+// R=0.9995 ≈ 7 Hz highpass — gentle enough that bass blooms into the tail
+// rather than being progressively stripped over many loop passes.
 struct DcBlock {
     float x1 = 0.f, y1 = 0.f;
     float Process(float x) {
-        float y = x - x1 + 0.995f * y1;
+        float y = x - x1 + 0.9995f * y1;
         x1 = x; y1 = y;
         return y;
     }
@@ -42,6 +44,9 @@ public:
         for (int k = 0; k < 3; ++k) {
             dlL_[k].Init(bufs[k],     diff_sz, fs, block_sz);
             dlR_[k].Init(bufs[k + 3], diff_sz, fs, block_sz);
+            // Match glide rate of the long delay so all taps sweep together.
+            dlL_[k].SetMaxStep(50.f);
+            dlR_[k].SetMaxStep(50.f);
         }
         longL_.Init(bufs[6], long_sz);
         longR_.Init(bufs[7], long_sz);

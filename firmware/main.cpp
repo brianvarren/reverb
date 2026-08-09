@@ -4,43 +4,47 @@
 // Needs no external wiring. Flash it, open a serial monitor, read the numbers.
 // Audio out on pins 18/19 is optional — it's there if you want to hear it.
 //
-// Build:  make            (VERB_HOT_SRAM=1, the plan §7.1 layout)
+// Build:  make            (VERB_HOT_SRAM=1 — see layout below)
 //         make sdram      (everything in SDRAM — measures the latency penalty)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include "daisy_seed.h"
+#include "config.h"
 #include "reverb.h"
 
 using namespace daisy;
 
 // ── memory layout ────────────────────────────────────────────────────────────
-// VERB_HOT_SRAM=1 → predelay in SDRAM (sequential, unmodulated, integer reads),
-//                   everything hot in internal SRAM.
-// VERB_HOT_SRAM=0 → all buffers in SDRAM. Same audio, worse cache behaviour.
+// Buffer sizes come from config.h (shared with host/TUI) so null tests stay
+// valid across builds.
+//
+// VERB_HOT_SRAM=1 (default):
+//   SDRAM  — predelay (sequential reads, largest)
+//            + late diffusers (6 × 32 KB, randomly accessed with modulation)
+//   SRAM   — early allpass (6 × 2 KB), long delays (2 × 128 KB), injection (2 × 4 KB)
+//            Total SRAM hot: 48 + 256 + 8 = 312 KB  (of 512 KB)
+//
+// VERB_HOT_SRAM=0:
+//   All buffers in SDRAM.  Same audio, weaker cache utilisation.
 #ifndef VERB_HOT_SRAM
 #define VERB_HOT_SRAM 1
 #endif
 
-// Sizes match host/main.cpp so a null-test against the desktop render stays valid.
-constexpr size_t kEarlyBuf = 8192;  // ~170 ms predelay ceiling at 48 kHz
-constexpr size_t kDiffBuf  = 4096;
-constexpr size_t kLongBuf  = 8192;
-
 constexpr size_t kBlock = 48;
 constexpr float  kFS    = 48000.f;
 
-// Predelay always lives in SDRAM — it's the one buffer whose access pattern
-// SDRAM is actually good at, and it's the largest.
-static float DSY_SDRAM_BSS predelay_buf[2][kEarlyBuf];
+// Predelay and late diffusers always live in SDRAM.
+static float DSY_SDRAM_BSS predelay_buf[2][kBufEarly];
+static float DSY_SDRAM_BSS diff_buf[6][kBufDiff];
 
 #if VERB_HOT_SRAM
-static float ap_buf[6][kEarlyBuf];   // 192 KB   ┐
-static float diff_buf[6][kDiffBuf];  //  96 KB   ├ 352 KB internal SRAM
-static float long_buf[2][kLongBuf];  //  64 KB   ┘
+static float ap_buf  [6][kBufEarly];   //  48 KB  ┐
+static float long_buf[2][kBufLong];    // 256 KB  ├ 312 KB internal SRAM
+static float inj_buf [2][kBufInj];     //   8 KB  ┘
 #else
-static float DSY_SDRAM_BSS ap_buf[6][kEarlyBuf];
-static float DSY_SDRAM_BSS diff_buf[6][kDiffBuf];
-static float DSY_SDRAM_BSS long_buf[2][kLongBuf];
+static float DSY_SDRAM_BSS ap_buf  [6][kBufEarly];
+static float DSY_SDRAM_BSS long_buf[2][kBufLong];
+static float DSY_SDRAM_BSS inj_buf [2][kBufInj];
 #endif
 
 // ── globals ──────────────────────────────────────────────────────────────────
@@ -74,9 +78,9 @@ struct TestGen {
 };
 static TestGen gen;
 
-// Worst case for this topology is the longest delay lines with modulation at
-// full depth: most cache pressure, most interpolated reads landing off-stride.
-static volatile bool  stress   = true;
+// Sweep lt_sz across the full pitch range to stress-test all buffer depths
+// and every path through the interpolated-read/smoother logic.
+static volatile bool  stress    = true;
 static volatile float stress_sz = 18.f;
 
 // ── linker symbols, for the memory report ────────────────────────────────────
@@ -128,28 +132,37 @@ int main(void)
     EnableFlushToZero();
 
     // SDRAM contents are undefined at boot and constructors ran before the
-    // controller was up. Zero it by hand or the first pass through predelay
-    // injects garbage into a feedback path it will never fully leave.
+    // controller was up. Zero every SDRAM buffer explicitly; SRAM BSS is
+    // already zeroed by the C startup code.
     for (int c = 0; c < 2; ++c)
-        for (size_t i = 0; i < kEarlyBuf; ++i) predelay_buf[c][i] = 0.f;
+        for (size_t i = 0; i < kBufEarly; ++i) predelay_buf[c][i] = 0.f;
+    for (int c = 0; c < 6; ++c)
+        for (size_t i = 0; i < kBufDiff; ++i) diff_buf[c][i] = 0.f;
 #if !VERB_HOT_SRAM
-    for (int c = 0; c < 6; ++c) {
-        for (size_t i = 0; i < kEarlyBuf; ++i) ap_buf[c][i]   = 0.f;
-        for (size_t i = 0; i < kDiffBuf;  ++i) diff_buf[c][i] = 0.f;
-    }
+    for (int c = 0; c < 6; ++c)
+        for (size_t i = 0; i < kBufEarly; ++i) ap_buf[c][i] = 0.f;
     for (int c = 0; c < 2; ++c)
-        for (size_t i = 0; i < kLongBuf; ++i) long_buf[c][i] = 0.f;
+        for (size_t i = 0; i < kBufLong; ++i) long_buf[c][i] = 0.f;
+    for (int c = 0; c < 2; ++c)
+        for (size_t i = 0; i < kBufInj; ++i) inj_buf[c][i] = 0.f;
 #endif
 
-    float* bufs[16];
+    // Wire up the 18-buffer array matching Reverb::Init's expected layout:
+    //   [0..7]   early section (kBufEarly each)
+    //   [8..13]  late diffusers (kBufDiff each)
+    //   [14..15] late long delays (kBufLong each)
+    //   [16..17] late injection delays (kBufInj each)
+    float* bufs[18];
     bufs[0] = predelay_buf[0];
     bufs[1] = predelay_buf[1];
     for (int i = 0; i < 6; ++i) bufs[2 + i]  = ap_buf[i];
     for (int i = 0; i < 6; ++i) bufs[8 + i]  = diff_buf[i];
     bufs[14] = long_buf[0];
     bufs[15] = long_buf[1];
+    bufs[16] = inj_buf[0];
+    bufs[17] = inj_buf[1];
 
-    reverb.Init(bufs, kEarlyBuf, kDiffBuf, kLongBuf, kFS, kBlock);
+    reverb.Init(bufs, kBufEarly, kBufDiff, kBufLong, kBufInj, kFS, kBlock);
     ParamsClamp(params);
     reverb.SnapParams(params);
 
@@ -165,13 +178,14 @@ int main(void)
     bool     led  = false;
 
     while (1) {
-        // Walk the worst case: Late size from small (short delays) down to the
-        // longest lines the buffers cover. Slow enough to read each step.
+        // Sweep lt_sz from high (short loops, heavy cache on diffusers) down to
+        // the minimum safe pitch (-24 = ~23k-sample diffuser taps) to exercise
+        // the full buffer depth and smoother-glide path.
         if (stress) {
             static float dir = -1.f;
             stress_sz += dir * 0.25f;
-            if (stress_sz < 18.f) { stress_sz = 18.f; dir =  1.f; }
-            if (stress_sz > 42.f) { stress_sz = 42.f; dir = -1.f; }
+            if (stress_sz < -24.f) { stress_sz = -24.f; dir =  1.f; }
+            if (stress_sz >  42.f) { stress_sz =  42.f; dir = -1.f; }
         }
 
         if (System::GetNow() - last >= 1000) {

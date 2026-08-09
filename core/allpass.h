@@ -29,6 +29,11 @@ public:
         smoother_.SetMaxStep(1.0f);  // ≤ ~2% Doppler shift/block; large jumps glide
     }
 
+    // Override the per-block max step set during Init. Useful when the same
+    // AllPass class serves contexts with different glide-rate requirements
+    // (early section keeps 1 sample/block; late diffusers match the long delay).
+    void SetMaxStep(float s) { smoother_.SetMaxStep(s); }
+
     // Hard-clamped to |g| < 0.95 (stability requirement).
     void SetGain(float g) { g_ = clampf(g, -0.949f, 0.949f); }
 
