@@ -73,7 +73,7 @@ public:
         smL_[3].Reset(tgtL_[3]);  dL_[3] = tgtL_[3];
         smR_[3].Reset(tgtR_[3]);  dR_[3] = tgtR_[3];
         _update_shelves(p, fs);
-        _update_fb(fs, p.rt60_s, p.bloom);
+        _update_fb(fs, p.rt60_s, p.bloom, p.sat);
         _update_lfo(p, fs);
         smInj_[0].Reset(inj_base_); d_inj_[0] = inj_base_;
         smInj_[1].Reset(inj_base_); d_inj_[1] = inj_base_;
@@ -89,7 +89,7 @@ public:
         dL_[3] = smL_[3].Process(tgtL_[3]);
         dR_[3] = smR_[3].Process(tgtR_[3]);
         _update_shelves(p, fs);
-        _update_fb(fs, p.rt60_s, p.bloom);
+        _update_fb(fs, p.rt60_s, p.bloom, p.sat);
         _update_lfo(p, fs);
         d_inj_[0] = smInj_[0].Process(inj_base_);
         d_inj_[1] = smInj_[1].Process(inj_base_);
@@ -183,17 +183,28 @@ private:
         chainR_.SetParams(hf, hb, lf, lb, fs);
     }
 
-    void _update_fb(float fs, float rt60_s, float bloom) {
+    void _update_fb(float fs, float rt60_s, float bloom, float sat) {
         float D = loop_length_samples();
         fb_gain_ = powf(10.f, -3.f * (D / fs) / (rt60_s * bloom));
         fb_gain_ = fminf(fb_gain_, 0.995f);
+        // Makeup gain: compensate tanh gain reduction at a reference level of 0.1.
+        // Ideal = ref * drive / tanh(drive * ref); clamped so small-signal loop gain < 1.
+        // (tanh slope = 1 at origin, so total gain = fb_gain * makeup must stay < 1.)
+        if (sat > 0.001f) {
+            const float kRef = 0.1f;
+            float drive = 1.f + sat * 4.f;
+            float ideal = kRef * drive / tanhf(drive * kRef);
+            makeup_  = fminf(ideal, 0.999f / fb_gain_);
+        } else {
+            makeup_ = 1.f;
+        }
     }
 
     void _update_lfo(const Params& p, float fs) {
         chaos_     = p.chaos;
         mod_depth_ = p.mod_ms * 0.001f * fs;
         inj_base_  = mod_depth_ + 1.f;  // injection base: center depth + 1 sample guard
-        drive_     = 1.f + p.sat * 19.f;
+        drive_     = 1.f + p.sat * 4.f;   // range [1, 5]; makeup compensates gain loss
         // LFO rates spread by φ^(k/7) at chaos=1, all identical at chaos=0.
         // Slots 0..3 = L diffusers + long; 4..7 = R counterparts; 8..9 = injection L/R.
         static const float kLfoRatios[10] = {
@@ -209,7 +220,7 @@ private:
 
     float _sat(float x) const {
         if (drive_ <= 1.001f) return x;
-        return tanhf(drive_ * x) / drive_;
+        return tanhf(drive_ * x) / drive_ * makeup_;
     }
 
     // Advances 8 independent LFOs and 8 slow chaos oscillators.
@@ -252,6 +263,7 @@ private:
     float        mod_depth_       = 0.f;
     float        inj_base_        = 1.f;
     float        drive_           = 1.f;
+    float        makeup_          = 1.f;
     float        block_sz_   = 48.f;
     float        mod_[10]     = {};
     float        mod_inc_[10] = {};

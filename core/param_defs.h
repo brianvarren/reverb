@@ -102,7 +102,8 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* Each pass generates harmonics from whatever is circulating; those get    */ \
     /* diffused by the rotation/allpass stages on the next pass, building a     */ \
     /* self-enriching overtone tail independent of the source material.         */ \
-    /* drive = 1 + sat × 19  →  range [1, 20]; at sat=0 tanh(x)/1 ≈ x.        */ \
+    /* drive = 1 + sat × 4  →  range [1, 5]; makeup gain compensates the        */ \
+    /* gain reduction so the tail level tracks fb_gain as intended.             */ \
     X(sat,        "sat",         0.f,   0.f,   1.f, kLin, "",    "Harmonics"     ) \
                                                                                \
     /* ── IN-LOOP EQ ─────────────────────────────────────────────────────── */ \
