@@ -95,6 +95,16 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     /* Creates non-periodic modulation that sounds alive and never repeats.  */ \
     X(chaos,      "chaos",       0.f,   0.f,   1.f, kLin, "",    "Chaos"         ) \
                                                                                \
+    /* sat  [0 – 1, linear]                                                     */ \
+    /* Soft saturation (tanh) applied once per loop pass, before the long       */ \
+    /* delay write.  In-loop tanh is a contraction (slope ≤ 1) so it can never */ \
+    /* increase loop gain — the feedback is unconditionally stable at all sat.  */ \
+    /* Each pass generates harmonics from whatever is circulating; those get    */ \
+    /* diffused by the rotation/allpass stages on the next pass, building a     */ \
+    /* self-enriching overtone tail independent of the source material.         */ \
+    /* drive = 1 + sat × 19  →  range [1, 20]; at sat=0 tanh(x)/1 ≈ x.        */ \
+    X(sat,        "sat",         0.f,   0.f,   1.f, kLin, "",    "Harmonics"     ) \
+                                                                               \
     /* ── IN-LOOP EQ ─────────────────────────────────────────────────────── */ \
     /* Two-band shelf applied on every pass of early and late.               */ \
     /* Gains must be ≤ 0 dB (LoopShelf assertion) for loop stability.       */ \

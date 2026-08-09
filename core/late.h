@@ -131,6 +131,8 @@ public:
         rot_.Process(aL, aR);  // 4th rotation before chain shelf
         aL = chainL_.Process(aL);
         aR = chainR_.Process(aR);
+        aL = _sat(aL);  // harmonic generation before long delay
+        aR = _sat(aR);
 
         float rawL = longL_.Read4pt(dL_[3] + mod_[3]);  longL_.Write(aL);
         float rawR = longR_.Read4pt(dR_[3] + mod_[7]);  longR_.Write(aR);
@@ -191,6 +193,7 @@ private:
         chaos_     = p.chaos;
         mod_depth_ = p.mod_ms * 0.001f * fs;
         inj_base_  = mod_depth_ + 1.f;  // injection base: center depth + 1 sample guard
+        drive_     = 1.f + p.sat * 19.f;
         // LFO rates spread by φ^(k/7) at chaos=1, all identical at chaos=0.
         // Slots 0..3 = L diffusers + long; 4..7 = R counterparts; 8..9 = injection L/R.
         static const float kLfoRatios[10] = {
@@ -202,6 +205,11 @@ private:
             float ratio = 1.f + p.chaos * (kLfoRatios[k] - 1.f);
             lfo_inc_[k] = p.mod_hz * ratio / fs;
         }
+    }
+
+    float _sat(float x) const {
+        if (drive_ <= 1.001f) return x;
+        return tanhf(drive_ * x) / drive_;
     }
 
     // Advances 8 independent LFOs and 8 slow chaos oscillators.
@@ -243,6 +251,7 @@ private:
     float        chaos_           = 0.f;
     float        mod_depth_       = 0.f;
     float        inj_base_        = 1.f;
+    float        drive_           = 1.f;
     float        block_sz_   = 48.f;
     float        mod_[10]     = {};
     float        mod_inc_[10] = {};

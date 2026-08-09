@@ -123,6 +123,7 @@ static void build_rows(Ui& ui) {
     row_param(kP_mod_hz);
     row_param(kP_mod_ms);
     row_param(kP_chaos);
+    row_param(kP_sat);
 
     row_header("IN-LOOP EQ");
     row_param(kP_lp_hz);
