@@ -15,9 +15,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
 #include <langinfo.h>
 #include <locale.h>
 #include <string>
+#include <thread>
 #include <vector>
 
 #define MA_NO_DECODING
@@ -241,9 +243,17 @@ static void put(int y, const char* s) {
 
 // ─── main ────────────────────────────────────────────────────────────────────
 
+// Live-input routing, set once at startup and read by the audio callback.
+struct LiveRoute { bool on = false; ma_uint32 inCh = 0; int li = 0; int ri = 0; };
+static LiveRoute g_live;
+
 static void audio_cb(ma_device* dev, void* out, const void* in, ma_uint32 frames) {
-    (void)in;
-    static_cast<Engine*>(dev->pUserData)->Render(static_cast<float*>(out), frames);
+    Engine* e = static_cast<Engine*>(dev->pUserData);
+    if (g_live.on && in)
+        e->RenderLive(static_cast<const float*>(in), g_live.inCh, g_live.li, g_live.ri,
+                      static_cast<float*>(out), frames);
+    else
+        e->Render(static_cast<float*>(out), frames);
 }
 
 static Params load_params(const char* path, bool* ok) {
@@ -314,9 +324,15 @@ int main(int argc, char** argv) {
     const char* params_path = "params.txt";
     const char* wav_path    = nullptr;
     int         dev_index   = -1;
+    int         cap_index   = -1;
+    bool        live        = false;
+    int         inch        = 4;     // capture channel count (Tonverk = 4)
+    int         li1         = 3;     // 1-based capture channels to read (OUT CD)
+    int         ri1         = 4;
     ma_uint32   period      = 256;
     ma_uint32   rate        = 48000;
     bool        list_only   = false;
+    int         headless    = 0;     // >0: run N seconds, no ncurses, print stats
 
     for (int i = 1; i < argc; ++i) {
         if      (!strcmp(argv[i], "--in")     && i+1 < argc) wav_path  = argv[++i];
@@ -324,6 +340,11 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--period") && i+1 < argc) period    = (ma_uint32)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--rate")   && i+1 < argc) rate      = (ma_uint32)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--list-devices"))         list_only = true;
+        else if (!strcmp(argv[i], "--live"))                 live      = true;
+        else if (!strcmp(argv[i], "--capture") && i+1 < argc) cap_index = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--inch")    && i+1 < argc) inch      = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--inpair")  && i+2 < argc) { li1 = atoi(argv[++i]); ri1 = atoi(argv[++i]); }
+        else if (!strcmp(argv[i], "--headless") && i+1 < argc) headless = atoi(argv[++i]);
         else if (argv[i][0] != '-')                          params_path = argv[i];
     }
 
@@ -340,9 +361,27 @@ int main(int argc, char** argv) {
         printf("playback devices:\n");
         for (ma_uint32 i = 0; i < play_n; ++i)
             printf("  %2u  %s%s\n", i, play_info[i].name, play_info[i].isDefault ? "  (default)" : "");
+        printf("capture devices:\n");
+        for (ma_uint32 i = 0; i < cap_n; ++i)
+            printf("  %2u  %s%s\n", i, cap_info[i].name, cap_info[i].isDefault ? "  (default)" : "");
         ma_context_uninit(&ctx);
         return 0;
     }
+
+    // In --live mode, auto-pick the Tonverk for capture and playback if the
+    // user did not pin them explicitly (first device whose name contains it).
+    if (live) {
+        if (cap_index < 0)
+            for (ma_uint32 i = 0; i < cap_n; ++i)
+                if (strstr(cap_info[i].name, "Tonverk")) { cap_index = (int)i; break; }
+        if (dev_index < 0)
+            for (ma_uint32 i = 0; i < play_n; ++i)
+                if (strstr(play_info[i].name, "Tonverk")) { dev_index = (int)i; break; }
+    }
+    g_live.on   = live;
+    g_live.inCh = (ma_uint32)inch;
+    g_live.li   = li1 - 1;
+    g_live.ri   = ri1 - 1;
 
     // ── params ───────────────────────────────────────────────────────────────
     bool ok = false;
@@ -358,15 +397,36 @@ int main(int argc, char** argv) {
     }
 
     // ── audio ────────────────────────────────────────────────────────────────
-    ma_device_config cfg   = ma_device_config_init(ma_device_type_playback);
-    cfg.playback.format    = ma_format_f32;
-    cfg.playback.channels  = 2;
-    cfg.sampleRate         = rate;
-    cfg.periodSizeInFrames = period;
-    cfg.dataCallback       = audio_cb;
-    cfg.pUserData          = &g_eng;
-    if (dev_index >= 0 && (ma_uint32)dev_index < play_n)
-        cfg.playback.pDeviceID = &play_info[dev_index].id;
+    // One builder for both the initial open and restarts. Duplex in --live mode
+    // (Tonverk: inch-channel capture + 2-ch playback, single USB clock domain),
+    // plain playback otherwise.
+    auto make_cfg = [&]() -> ma_device_config {
+        ma_device_config c;
+        if (g_live.on) {
+            c = ma_device_config_init(ma_device_type_duplex);
+            c.capture.format    = ma_format_f32;
+            c.capture.channels  = (ma_uint32)inch;
+            c.playback.format   = ma_format_f32;
+            c.playback.channels = 2;
+            if (cap_index >= 0 && (ma_uint32)cap_index < cap_n)
+                c.capture.pDeviceID = &cap_info[cap_index].id;
+            if (dev_index >= 0 && (ma_uint32)dev_index < play_n)
+                c.playback.pDeviceID = &play_info[dev_index].id;
+        } else {
+            c = ma_device_config_init(ma_device_type_playback);
+            c.playback.format   = ma_format_f32;
+            c.playback.channels = 2;
+            if (dev_index >= 0 && (ma_uint32)dev_index < play_n)
+                c.playback.pDeviceID = &play_info[dev_index].id;
+        }
+        c.sampleRate         = rate;
+        c.periodSizeInFrames = period;
+        c.dataCallback       = audio_cb;
+        c.pUserData          = &g_eng;
+        return c;
+    };
+
+    ma_device_config cfg = make_cfg();
 
     ma_device dev;
     bool silent = false;
@@ -384,6 +444,26 @@ int main(int argc, char** argv) {
         silent = true;
     }
     ma_device_start(&dev);
+
+    // ── headless mode ──────────────────────────────────────────────────────────
+    // No ncurses: just run the live audio path for N seconds and print engine
+    // stats once a second. Isolates the DSP/IO path from UI-thread contention and
+    // works over a plain SSH pipe (no PTY needed).
+    if (headless > 0) {
+        printf("headless: dev=%s  live=%d  %u Hz  period=%u  inpair=%d/%d of %dch\n",
+               dev.playback.name, (int)g_live.on, dev.sampleRate, period, li1, ri1, inch);
+        fflush(stdout);
+        for (int t = 0; t < headless; ++t) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            printf("  t=%2ds  cpu_load=%.2f  overruns=%d  blowups=%d\n",
+                   t + 1, g_eng.cpu_load(), g_eng.overruns(), g_eng.blowups());
+            fflush(stdout);
+        }
+        ma_device_stop(&dev);
+        ma_device_uninit(&dev);
+        ma_context_uninit(&ctx);
+        return 0;
+    }
 
     // ── curses ───────────────────────────────────────────────────────────────
     setlocale(LC_ALL, "");
@@ -442,15 +522,7 @@ int main(int argc, char** argv) {
             g_eng.Init(float(rate), cur);
             push_ui();
         }
-        ma_device_config cfg2 = ma_device_config_init(ma_device_type_playback);
-        cfg2.playback.format    = ma_format_f32;
-        cfg2.playback.channels  = 2;
-        cfg2.sampleRate         = rate;
-        cfg2.periodSizeInFrames = period;
-        cfg2.dataCallback       = audio_cb;
-        cfg2.pUserData          = &g_eng;
-        if (!silent && dev_index >= 0 && (ma_uint32)dev_index < play_n)
-            cfg2.playback.pDeviceID = &play_info[dev_index].id;
+        ma_device_config cfg2 = make_cfg();
         if (ma_device_init(&ctx, &cfg2, &dev) != MA_SUCCESS ||
             ma_device_start(&dev) != MA_SUCCESS) {
             snprintf(msg, sizeof msg, "audio restart failed");

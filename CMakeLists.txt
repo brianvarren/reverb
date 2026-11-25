@@ -72,3 +72,17 @@ if(CURSES_FOUND)
 else()
     message(STATUS "ncurses not found — skipping verb_tui")
 endif()
+
+# ── verb_live: direct-ALSA full-duplex host (no miniaudio) ────────────────────
+find_package(ALSA)
+if(ALSA_FOUND)
+    find_package(Threads REQUIRED)
+    add_executable(verb_live tui/live.cpp)
+    target_link_libraries(verb_live PRIVATE
+        verb_core ALSA::ALSA Threads::Threads m)
+    target_include_directories(verb_live PRIVATE
+        ${CMAKE_SOURCE_DIR}/tui ${CMAKE_SOURCE_DIR}/host)
+    target_compile_options(verb_live PRIVATE -O2 -Wall -Wextra)
+else()
+    message(STATUS "ALSA not found — skipping verb_live")
+endif()

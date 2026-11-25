@@ -155,7 +155,20 @@ public:
 
     // ── audio thread ─────────────────────────────────────────────────────────
 
+    // Playback-only (test bench): engine synthesises its own source.
     void Render(float* out, size_t frames) {
+        RenderImpl(nullptr, 0, 0, 0, out, frames);
+    }
+    // Live duplex: inject captured input (interleaved, inCh channels) as the
+    // reverb source, reading 0-based channels li/ri. The test generator still
+    // mixes in on top, so on-screen tones work over the live feed.
+    void RenderLive(const float* in, uint32_t inCh, int li, int ri,
+                    float* out, size_t frames) {
+        RenderImpl(in, inCh, li, ri, out, frames);
+    }
+
+    void RenderImpl(const float* in, uint32_t inCh, int li, int ri,
+                    float* out, size_t frames) {
         using clk = std::chrono::steady_clock;
         const auto t0 = clk::now();
         _denormals_off();
@@ -196,6 +209,10 @@ public:
             for (size_t i = 0; i < n; ++i) {
                 float s = gen_.Process();
                 float sL = s, sR = s;
+                if (in) {
+                    sL += in[(done + i) * inCh + li];
+                    sR += in[(done + i) * inCh + ri];
+                }
                 if (fon) {
                     sL += file_[file_pos_ * 2 + 0] * flvl;
                     sR += file_[file_pos_ * 2 + 1] * flvl;
