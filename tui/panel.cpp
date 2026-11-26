@@ -39,12 +39,11 @@ static int  TY_MIN = 300,  TY_MAX = 4001;
 static bool INVERT_X = false;
 static bool INVERT_Y = true;   // screen top = max value
 
-// ── the four faders ───────────────────────────────────────────────────────────
-static const int   NB = 4;
-static const char* BAR_KEY[NB]   = { "decay", "lt_sz", "out_freq", "dw_mix" };
-static const char* BAR_LABEL[NB] = { "DECAY", "SIZE",  "OUT Hz",   "DRY/WET" };
-static int         g_pidx[NB];                 // resolved Engine param indices
-static float       g_lo[NB], g_hi[NB];
+// ── faders: one per engine parameter, built dynamically from ParamTable() ─────
+// Fader b drives engine param b directly; ranges/curve/label come from the
+// table, so promoting a baked constant to a param makes a slider appear here
+// automatically. Touch maps 0..1 → value via the param's curve (ParamMapNorm).
+static const int NB = kParamCount;
 
 // ── S24_3LE (3-byte packed, signed) ↔ float ─────────────────────────────────
 static inline float s24_to_f(const uint8_t* p) {
@@ -174,8 +173,8 @@ static void touch_thread(const char* node) {
         if (down) {
             int bar = (int)(nx * NB); if (bar < 0) bar = 0; if (bar >= NB) bar = NB - 1;
             s->active.store(bar);
-            float val = g_lo[bar] + ny * (g_hi[bar] - g_lo[bar]);   // ny already top=1
-            s->eng->SetParam(g_pidx[bar], val);
+            float val = ParamMapNorm(bar, ny);   // curve-aware; ny already top=1
+            s->eng->SetParam(bar, val);
         } else {
             s->active.store(-1);
         }
@@ -189,9 +188,10 @@ static void draw_bar(int zone, int ncols, int top, int bot, int b) {
     const int bw = (zw - 2 < 14) ? zw - 2 : 14;
     const int x0 = zone * zw + (zw - bw) / 2;
     const int h  = bot - top;
-    float v = g_sh.eng->GetParam(g_pidx[b]);
-    float nv = (v - g_lo[b]) / (g_hi[b] - g_lo[b]);
-    if (nv < 0) nv = 0; if (nv > 1) nv = 1;
+    const float v  = g_sh.eng->GetParam(b);
+    float       nv = ParamNormOf(b, v);
+    if (nv < 0) nv = 0;
+    if (nv > 1) nv = 1;
     const int fill = (int)lrintf(nv * h);
     const bool act = (g_sh.active.load() == b);
 
@@ -204,9 +204,8 @@ static void draw_bar(int zone, int ncols, int top, int bot, int b) {
         if (!on) { attron(A_DIM); for (int c = 0; c < bw; ++c) mvaddch(top + r, x0 + c, '.'); attroff(A_DIM); }
     }
     char buf[64];
-    mvprintw(bot + 1, x0, "%-*s", bw, BAR_LABEL[b]);
-    if (!strcmp(BAR_KEY[b], "out_freq")) snprintf(buf, sizeof buf, "%.0f", v);
-    else                                 snprintf(buf, sizeof buf, "%.2f", v);
+    mvprintw(bot + 1, x0, "%-*s", bw, ParamTable()[b].label);
+    snprintf(buf, sizeof buf, (fabsf(v) >= 100.f) ? "%.0f" : "%.2f", v);
     if (act) attron(A_BOLD);
     mvprintw(bot + 2, x0, "%-*s", bw, buf);
     if (act) attroff(A_BOLD);
@@ -231,13 +230,7 @@ int main(int argc, char** argv) {
     static Engine eng; eng.Init((float)g_sh.rate, p0);
     g_sh.eng = &eng;
 
-    // resolve the four param indices + ranges
-    const ParamDesc* t = ParamTable();
-    for (int b = 0; b < NB; ++b) {
-        g_pidx[b] = 0;
-        for (int i = 0; i < kParamCount; ++i)
-            if (!strcmp(BAR_KEY[b], t[i].key)) { g_pidx[b] = i; g_lo[b] = t[i].lo; g_hi[b] = t[i].hi; break; }
-    }
+    // Fader b ↔ engine param b (0..kParamCount-1); nothing to resolve.
 
     std::thread at(audio_thread);
     std::thread tt(touch_thread, touch_node);

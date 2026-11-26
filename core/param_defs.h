@@ -50,7 +50,28 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
                                                                                \
     /* ── MIX ────────────────────────────────────────────────────────────── */ \
     /* 0 = dry only, 1 = full wet (send/return use).                         */ \
-    X(dw_mix,     "dw_mix",      0.5f,  0.f,   1.f, kLin, "",    "Mix"           )
+    X(dw_mix,     "dw_mix",      0.5f,  0.f,   1.f, kLin, "",    "Mix"           ) \
+                                                                               \
+    /* ── PROMOTED FOR TUNING (were baked constants; ranges are starting     */ \
+    /*    points, tweak freely) ──────────────────────────────────────────── */ \
+    X(predelay_ms,"predelay_ms",18.0f,  0.f, 200.f, kLin, "ms",  "PreDly"     ) \
+    X(pd_sym,     "pd_sym",       5.1f,-12.f,  12.f, kLin, "semi","PdSym"      ) \
+    X(er_sz,      "er_sz",       39.9f, 12.f,  60.f, kLin, "semi","ErSz"       ) \
+    X(er_sym,     "er_sym",       2.37f, 0.f,   8.f, kLin, "semi","ErSym"      ) \
+    X(er_dffs,    "er_dffs",      0.60f, 0.f, 0.85f, kLin, "",    "ErDif"      ) \
+    X(mod_hz,     "mod_hz",       0.87f,0.05f,  5.f, kExp, "Hz",  "ModHz"      ) \
+    X(mod_ms,     "mod_ms",       1.0f,  0.f,   4.f, kLin, "ms",  "ModMs"      ) \
+    X(chaos,      "chaos",        0.94f, 0.f,   1.f, kLin, "",    "Chaos"      ) \
+    X(lt_sym,     "lt_sym",       2.62f, 0.f,   8.f, kLin, "semi","LtSym"      ) \
+    X(lt_theta,   "lt_theta",0.7853982f,0.f,1.5708f, kLin, "rad", "Rot"        ) \
+    X(lt_dffs,    "lt_dffs",      0.494f,0.f, 0.85f, kLin, "",    "LtDif"      ) \
+    X(sat,        "sat",          0.12f, 0.f,   1.f, kLin, "",    "Sat"        ) \
+    X(lt_hf_hz,   "lt_hf_hz",   2000.f,500.f,12000.f,kExp, "Hz",  "HFHz"       ) \
+    X(lt_hf_ratio,"lt_hf_ratio",  0.30f,0.02f,  1.f, kLin, "",    "HFrat"      ) \
+    X(lt_hf_max_s,"lt_hf_max_s",  8.0f, 0.5f,  30.f, kExp, "s",   "HFmax"      ) \
+    X(out_width,  "out_width",    6.28f, 0.f,  10.f, kLin, "oct", "OutW"       ) \
+    X(hp_hz,      "hp_hz",     4186.f, 200.f,12000.f,kExp, "Hz",  "ErHP"       ) \
+    X(hp_db,      "hp_db",       -0.1f,-24.f,   0.f, kLin, "dB",  "ErHPg"      )
 
 // ── generated: the struct ────────────────────────────────────────────────────
 
@@ -65,30 +86,9 @@ struct Params {
     float rt60_s = 4.243f;   // DecayToRt60(decay)
     float el_mix = 0.5f;     // decay
 
-    // ── permanently baked ─────────────────────────────────────────────────────
-    float predelay_ms = 18.0f;
-    float pd_sym      = 5.1f;
-    // Early diffusers: was er_sz 14.2 → 39–62 ms allpasses, which at g≈0.58 are
-    // discrete echo generators (≈16 Hz flutter), not diffusers. Now 4.8–14 ms.
-    // Stage offsets live in early.h (kEarlyOffs), found by the same ratio search.
-    float er_sz       = 39.9f;
-    float er_sym      = 2.37f;
-    float er_dffs     = 0.60f;
-    float mod_hz      = 0.87f;
-    float mod_ms      = 1.0f;   // was 0.45: too shallow to smear loop modes
-    float out_width   = 6.28f;
-    float lt_sym   = 2.62f;   // was 2.5 → L/R 5 semis apart ≈ 4/3; see kLateOffs
-    float lt_theta = 0.7853982f;
-    float lt_dffs  = 0.494f;
-    float chaos    = 0.94f;
-    float sat      = 0.12f;
-    float hp_hz    = 4186.f;  // early-section shelf only (not in a loop)
-    float hp_db    = -0.1f;
-    // Late-loop HF damping: HF T60 = min(rt60 · ratio, max). See Late::_update_shelves.
-    // Measured octave-band T60 at rt60=16 s: 500 Hz 14 s, 2 k 8.5 s, 4 k 6 s, 8 k 4.4 s.
-    float lt_hf_hz    = 2000.f;
-    float lt_hf_ratio = 0.30f;
-    float lt_hf_max_s = 8.0f;
+    // ── former "permanently baked" params are now in VERB_PARAM_LIST above ─────
+    // (promoted so they can be tuned live; the macro generates their storage).
+    // Only decay-derived values remain here.
 
     static float DecayToRt60(float d) { return 0.3f * powf(200.f, d); }
 
