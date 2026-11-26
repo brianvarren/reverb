@@ -83,6 +83,18 @@ if(ALSA_FOUND)
     target_include_directories(verb_live PRIVATE
         ${CMAKE_SOURCE_DIR}/tui ${CMAKE_SOURCE_DIR}/host)
     target_compile_options(verb_live PRIVATE -O2 -Wall -Wextra)
+
+    # ── verb_panel: touch control surface (ALSA audio + ncurses UI + evdev) ────
+    if(CURSES_FOUND)
+        add_executable(verb_panel tui/panel.cpp)
+        target_link_libraries(verb_panel PRIVATE
+            verb_core ALSA::ALSA ${CURSES_LIBRARIES} Threads::Threads m)
+        target_include_directories(verb_panel PRIVATE
+            ${CMAKE_SOURCE_DIR}/tui ${CMAKE_SOURCE_DIR}/host ${CURSES_INCLUDE_DIRS})
+        target_compile_options(verb_panel PRIVATE -O2 -Wall -Wextra)
+    else()
+        message(STATUS "ncurses not found — skipping verb_panel")
+    endif()
 else()
     message(STATUS "ALSA not found — skipping verb_live")
 endif()
