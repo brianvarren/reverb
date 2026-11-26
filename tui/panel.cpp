@@ -39,11 +39,13 @@ static int  TY_MIN = 300,  TY_MAX = 4001;
 static bool INVERT_X = false;
 static bool INVERT_Y = true;   // screen top = max value
 
-// ── faders: one per engine parameter, built dynamically from ParamTable() ─────
-// Fader b drives engine param b directly; ranges/curve/label come from the
-// table, so promoting a baked constant to a param makes a slider appear here
-// automatically. Touch maps 0..1 → value via the param's curve (ParamMapNorm).
-static const int NB = kParamCount;
+// ── faders: one per engine parameter + a virtual SLEW fader at the end ────────
+// Faders 0..kParamCount-1 drive engine params (ranges/curve/label from the
+// table, so promoting a baked constant makes a slider appear automatically).
+// The last fader (SLEW_IDX) is the global param glide time, 0..kSlewMax s.
+static const float kSlewMax = 30.f;
+static const int   SLEW_IDX = kParamCount;
+static const int   NB       = kParamCount + 1;
 
 // ── S24_3LE (3-byte packed, signed) ↔ float ─────────────────────────────────
 static inline float s24_to_f(const uint8_t* p) {
@@ -66,10 +68,23 @@ struct Shared {
     unsigned rate = 48000; snd_pcm_uframes_t period = 256; unsigned periods = 3;
     int inch = 4, li = 2, ri = 3, rtprio = 80;
     std::atomic<long> xruns{0};
-    // touch state (for UI display + calibration readout)
-    std::atomic<int> tx{0}, ty{0}, tdown{0}, active{-1};
+    // touch state: fx/fy are screen fractions in permille (fx 0=left..1000=right,
+    // fy 0=top..1000=bottom); active = param index being dragged; page = current tab.
+    std::atomic<int> tx{0}, ty{0}, tdown{0}, active{-1}, page{0};
 };
+
+// Faders per page (big targets for a resistive stylus). 22 params → 3 pages.
+static const int PAGE_SIZE = 8;
 static Shared g_sh;
+
+// Virtual-fader accessors so draw/hit-test treat SLEW like any other fader.
+static float       fader_norm(int b)  { return (b == SLEW_IDX) ? g_sh.eng->GetSlew() / kSlewMax
+                                                               : ParamNormOf(b, g_sh.eng->GetParam(b)); }
+static void        fader_set(int b, float f) { if (b == SLEW_IDX) g_sh.eng->SetSlew(f * kSlewMax);
+                                               else g_sh.eng->SetParam(b, ParamMapNorm(b, f)); }
+static float       fader_val(int b)   { return (b == SLEW_IDX) ? g_sh.eng->GetSlew() : g_sh.eng->GetParam(b); }
+static const char* fader_label(int b) { return (b == SLEW_IDX) ? "SLEW" : ParamTable()[b].label; }
+static const char* fader_unit(int b)  { return (b == SLEW_IDX) ? "s"    : ParamTable()[b].unit; }
 
 static void on_sig(int) { g_sh.run.store(false); }
 
@@ -168,46 +183,61 @@ static void touch_thread(const char* node) {
         if (INVERT_X) nx = 1 - nx;
         if (INVERT_Y) ny = 1 - ny;
 
-        s->tx.store((int)(nx * 1000)); s->ty.store((int)(ny * 1000)); s->tdown.store(down);
-
-        if (down) {
-            int bar = (int)(nx * NB); if (bar < 0) bar = 0; if (bar >= NB) bar = NB - 1;
-            s->active.store(bar);
-            float val = ParamMapNorm(bar, ny);   // curve-aware; ny already top=1
-            s->eng->SetParam(bar, val);
-        } else {
-            s->active.store(-1);
-        }
+        // Publish screen fractions (fy: 0=top, 1=bottom). The UI thread owns the
+        // layout, so it does the hit-testing (tab bar vs fader) and sets params.
+        s->tx.store((int)(nx * 1000));
+        s->ty.store((int)((1.f - ny) * 1000));
+        s->tdown.store(down);
     }
     close(fd);
 }
 
-// ── draw one filled-rectangle fader ──────────────────────────────────────────
-static void draw_bar(int zone, int ncols, int top, int bot, int b) {
-    const int zw = ncols / NB;
-    const int bw = (zw - 2 < 14) ? zw - 2 : 14;
-    const int x0 = zone * zw + (zw - bw) / 2;
+// ── tab bar: nPages big buttons across the top ───────────────────────────────
+static void draw_tabs(int ncols, int lo, int hi, int nPages, int page) {
+    const int tw = ncols / nPages;
+    for (int p = 0; p < nPages; ++p) {
+        const bool cur = (p == page);
+        const int  x0  = p * tw;
+        char lbl[32];
+        snprintf(lbl, sizeof lbl, "PAGE %d/%d", p + 1, nPages);
+        const int lx = x0 + (tw - (int)strlen(lbl)) / 2;
+        int attr = cur ? A_REVERSE | A_BOLD : A_DIM;
+        attron(attr);
+        for (int r = lo; r < hi; ++r)
+            for (int c = 0; c < tw - 1; ++c) mvaddch(r, x0 + c, ' ');
+        attroff(attr);
+        attron(cur ? A_BOLD : A_DIM);
+        mvprintw((lo + hi) / 2, lx, "%s", lbl);
+        attroff(cur ? A_BOLD : A_DIM);
+    }
+}
+
+// ── one big filled-rectangle fader (slot of `count` across the width) ─────────
+static void draw_bar(int slot, int count, int ncols, int top, int bot, int pidx) {
+    const int zw = ncols / count;
+    const int bw = (zw - 2 > 3) ? zw - 2 : 3;      // as wide as the zone allows
+    const int x0 = slot * zw + (zw - bw) / 2;
     const int h  = bot - top;
-    const float v  = g_sh.eng->GetParam(b);
-    float       nv = ParamNormOf(b, v);
+    if (h < 1) return;
+    const float v  = fader_val(pidx);
+    float       nv = fader_norm(pidx);
     if (nv < 0) nv = 0;
     if (nv > 1) nv = 1;
-    const int fill = (int)lrintf(nv * h);
-    const bool act = (g_sh.active.load() == b);
+    const int  fill = (int)lrintf(nv * h);
+    const bool act  = (g_sh.active.load() == pidx);
 
     for (int r = 0; r < h; ++r) {
-        const bool on = (h - r) <= fill;         // fill from the bottom up
+        const bool on = (h - r) <= fill;           // fill from the bottom up
         int attr = on ? (A_REVERSE | (act ? A_BOLD : 0)) : A_DIM;
         attron(attr);
-        for (int c = 0; c < bw; ++c) mvaddch(top + r, x0 + c, ' ');
+        for (int c = 0; c < bw; ++c) mvaddch(top + r, x0 + c, on ? ' ' : '.');
         attroff(attr);
-        if (!on) { attron(A_DIM); for (int c = 0; c < bw; ++c) mvaddch(top + r, x0 + c, '.'); attroff(A_DIM); }
     }
     char buf[64];
-    mvprintw(bot + 1, x0, "%-*s", bw, ParamTable()[b].label);
-    snprintf(buf, sizeof buf, (fabsf(v) >= 100.f) ? "%.0f" : "%.2f", v);
     if (act) attron(A_BOLD);
-    mvprintw(bot + 2, x0, "%-*s", bw, buf);
+    mvprintw(bot + 1, x0, "%-*.*s", bw, bw, fader_label(pidx));
+    snprintf(buf, sizeof buf, (fabsf(v) >= 100.f) ? "%.0f%s" : "%.2f%s", v, fader_unit(pidx));
+    mvprintw(bot + 2, x0, "%-*.*s", bw, bw, buf);
     if (act) attroff(A_BOLD);
 }
 
@@ -238,19 +268,56 @@ int main(int argc, char** argv) {
     initscr(); cbreak(); noecho(); curs_set(0); nodelay(stdscr, TRUE); keypad(stdscr, TRUE);
     if (has_colors()) { start_color(); use_default_colors(); }
 
+    const int nPages = (NB + PAGE_SIZE - 1) / PAGE_SIZE;
     while (g_sh.run.load()) {
+        int page = g_sh.page.load();
         int ch = getch();
-        if (ch == 'q' || ch == 'Q') { g_sh.run.store(false); break; }
+        if      (ch == 'q' || ch == 'Q')           { g_sh.run.store(false); break; }
+        else if (ch == ']' || ch == KEY_RIGHT)     { if (page < nPages - 1) g_sh.page.store(page = page + 1); }
+        else if (ch == '[' || ch == KEY_LEFT)      { if (page > 0)          g_sh.page.store(page = page - 1); }
+        else if (ch >= '1' && ch <= '9')           { int p = ch - '1'; if (p < nPages) g_sh.page.store(page = p); }
 
-        erase();
         const int ncols = COLS, nrows = LINES;
-        mvprintw(0, 0, "verb_panel   dev=%s  period=%lu   cpu=%.0f%%  xruns=%ld  peak=%.0fdB   [q]uit",
+        const int tab_lo = 1, tab_hi = 5;            // tab bar occupies rows 1..4
+        const int fad_top = 6, fad_bot = nrows - 4;  // big faders below it
+
+        // ── touch hit-test (UI thread owns the layout) ──
+        if (g_sh.tdown.load()) {
+            const float fx  = g_sh.tx.load() / 1000.f;
+            const float fy  = g_sh.ty.load() / 1000.f;
+            const int   row = (int)(fy * nrows);
+            if (row >= tab_lo && row < tab_hi && nPages > 1) {
+                int p = (int)(fx * nPages);
+                if (p < 0) p = 0; if (p >= nPages) p = nPages - 1;
+                g_sh.page.store(page = p);
+                g_sh.active.store(-1);
+            } else if (row >= fad_top && row <= fad_bot && fad_bot > fad_top) {
+                int cnt = NB - page * PAGE_SIZE; if (cnt > PAGE_SIZE) cnt = PAGE_SIZE;
+                int slot = (int)(fx * cnt);
+                if (slot < 0) slot = 0; if (slot >= cnt) slot = cnt - 1;
+                const int pidx = page * PAGE_SIZE + slot;
+                float frac = float(fad_bot - row) / float(fad_bot - fad_top);
+                if (frac < 0) frac = 0; if (frac > 1) frac = 1;
+                fader_set(pidx, frac);
+                g_sh.active.store(pidx);
+            } else {
+                g_sh.active.store(-1);
+            }
+        } else {
+            g_sh.active.store(-1);
+        }
+
+        int count = NB - page * PAGE_SIZE; if (count > PAGE_SIZE) count = PAGE_SIZE;
+
+        // ── draw ──
+        erase();
+        mvprintw(0, 0, "verb_panel  %s per=%lu  cpu=%.0f%%  xruns=%ld  peak=%.0fdB   page %d/%d   [ ] tab  q quit",
                  g_sh.dev, (unsigned long)g_sh.period, eng.cpu_load() * 100.0,
-                 g_sh.xruns.load(), eng.peak_db());
-        mvprintw(1, 0, "touch: x=%4d y=%4d down=%d  bar=%d   (drag a column to set its value)",
-                 g_sh.tx.load(), g_sh.ty.load(), g_sh.tdown.load(), g_sh.active.load());
-        const int top = 3, bot = nrows - 4;
-        if (bot > top) for (int b = 0; b < NB; ++b) draw_bar(b, ncols, top, bot, b);
+                 g_sh.xruns.load(), eng.peak_db(), page + 1, nPages);
+        draw_tabs(ncols, tab_lo, tab_hi, nPages, page);
+        if (fad_bot > fad_top)
+            for (int slot = 0; slot < count; ++slot)
+                draw_bar(slot, count, ncols, fad_top, fad_bot, page * PAGE_SIZE + slot);
         refresh();
         napms(30);
     }

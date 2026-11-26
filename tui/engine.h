@@ -41,8 +41,11 @@ public:
 
     void Init(float fs, const Params& p) {
         fs_ = fs;
-        for (int i = 0; i < kParamCount; ++i)
-            ap_[i].store(*ParamSlot(const_cast<Params&>(p), i), std::memory_order_relaxed);
+        for (int i = 0; i < kParamCount; ++i) {
+            const float v = *ParamSlot(const_cast<Params&>(p), i);
+            ap_[i].store(v, std::memory_order_relaxed);
+            smn_[i] = ParamNormOf(i, v);          // glide state starts at the target
+        }
         gen_.Init(fs);
         _rebuild();
         for (int i = 0; i < kHistLen; ++i) hist_[i].store(-120.f, std::memory_order_relaxed);
@@ -52,6 +55,12 @@ public:
 
     void  SetParam(int i, float v) { ap_[i].store(v, std::memory_order_relaxed); }
     float GetParam(int i) const    { return ap_[i].load(std::memory_order_relaxed); }
+
+    // Global parameter slew: seconds for a full-range slider move to reach its
+    // target (0 = instant). The glide runs in the audio thread, per control
+    // block, in normalised space so the time is uniform across all params.
+    void  SetSlew(float s) { slew_s_.store(s, std::memory_order_relaxed); }
+    float GetSlew() const  { return slew_s_.load(std::memory_order_relaxed); }
 
     void SetSource(int type, float pitch, float len_ms, float level_db) {
         src_type_ .store(type,      std::memory_order_relaxed);
@@ -179,10 +188,21 @@ public:
 
             if (clear_.exchange(false, std::memory_order_acquire)) _rebuild();
 
-            // Snapshot params and run the control-rate update.
+            // Snapshot params, slew-limited toward their targets. Glide in
+            // normalised space (step = blockDt / slew) so a full-range move
+            // takes exactly `slew` seconds, uniform across every param. slew<=0
+            // snaps instantly (step huge → clamp is a no-op).
             Params p;
-            for (int i = 0; i < kParamCount; ++i)
-                *ParamSlot(p, i) = ap_[i].load(std::memory_order_relaxed);
+            const float slew = slew_s_.load(std::memory_order_relaxed);
+            const float step = (slew > 1e-3f) ? (float(kBlock) / fs_) / slew : 1e9f;
+            for (int i = 0; i < kParamCount; ++i) {
+                const float tgt = ParamNormOf(i, ap_[i].load(std::memory_order_relaxed));
+                float d = tgt - smn_[i];
+                if (d >  step) d =  step;
+                if (d < -step) d = -step;
+                smn_[i] += d;
+                *ParamSlot(p, i) = ParamMapNorm(i, smn_[i]);
+            }
             reverb_.UpdateBlock(p);
 
             const uint32_t t = trig_.load(std::memory_order_acquire);
@@ -397,6 +417,8 @@ private:
     int                blowups_local_ = 0;
     std::atomic<float> cpu_load_{0.f};
     std::atomic<int>   overruns_{0};
+    std::atomic<float> slew_s_{0.f};          // param glide time, seconds
+    float              smn_[kParamCount] = {}; // smoothed normalised param state
 
     std::atomic<float> hist_[kHistLen];
     std::atomic<int>   hist_w_{0};
