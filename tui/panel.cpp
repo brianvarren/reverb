@@ -122,6 +122,21 @@ static snd_pcm_t* open_pcm(const char* dev, snd_pcm_stream_t dir, unsigned rate,
     return h;
 }
 
+// Resolve the ALSA card index whose name contains `needle` (e.g. "Tonverk").
+// Returns -1 if absent — so we never silently fall back to the internal codec.
+static int find_card_by_name(const char* needle) {
+    int card = -1, found = -1;
+    while (snd_card_next(&card) == 0 && card >= 0) {
+        char* name = nullptr;
+        if (snd_card_get_name(card, &name) == 0 && name) {
+            if (strstr(name, needle)) found = card;
+            free(name);
+        }
+        if (found >= 0) break;
+    }
+    return found;
+}
+
 // ── audio thread: SCHED_FIFO direct-ALSA duplex ──────────────────────────────
 static void audio_thread() {
     Shared* s = &g_sh;
@@ -317,12 +332,28 @@ static void draw_info(int b, int ncols, int nrows) {
 int main(int argc, char** argv) {
     const char* params_path = "params.txt";
     const char* touch_node  = "/dev/input/event8";
+    bool        dev_set     = false;     // explicit --dev overrides auto-detect
     for (int i = 1; i < argc; ++i) {
-        if      (!strcmp(argv[i], "--dev")    && i+1 < argc) g_sh.dev = argv[++i];
+        if      (!strcmp(argv[i], "--dev")    && i+1 < argc) { g_sh.dev = argv[++i]; dev_set = true; }
         else if (!strcmp(argv[i], "--period") && i+1 < argc) g_sh.period = (snd_pcm_uframes_t)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--touch")  && i+1 < argc) touch_node = argv[++i];
         else if (!strcmp(argv[i], "--inpair") && i+2 < argc) { g_sh.li = atoi(argv[++i]) - 1; g_sh.ri = atoi(argv[++i]) - 1; }
         else if (argv[i][0] != '-')                          params_path = argv[i];
+    }
+
+    // Bind the Tonverk by NAME, never a hardcoded index. If it is not present,
+    // refuse to open any device — do NOT fall back to the internal speaker.
+    if (!dev_set) {
+        int c = find_card_by_name("Tonverk");
+        if (c < 0) {
+            fprintf(stderr, "verb_panel: Tonverk not found — not opening audio "
+                            "(won't touch the internal speaker). Connect it in "
+                            "USB AUDIO/MIDI mode and relaunch.\n");
+            return 2;
+        }
+        static char devbuf[32];
+        snprintf(devbuf, sizeof devbuf, "hw:%d,0", c);
+        g_sh.dev = devbuf;
     }
 
     signal(SIGINT, on_sig); signal(SIGTERM, on_sig);
