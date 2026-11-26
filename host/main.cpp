@@ -142,7 +142,7 @@ int main(int argc, char** argv) {
     // Cap at 5 min — at decay=1 the uncapped value is ~830 MB of zeros.
     const size_t kMaxTailFrames = size_t(300.f * kFS);
     const size_t tail_frames = std::min(
-        (size_t)std::ceil(p.rt60_s * p.bloom * 1.5f * kFS), kMaxTailFrames);
+        (size_t)std::ceil(p.rt60_s * 1.5f * kFS), kMaxTailFrames);
 
     // ── load / generate input ─────────────────────────────────────────────────
     std::vector<float> L, R;

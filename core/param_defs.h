@@ -37,10 +37,11 @@ enum ParamCurve { kLin, kExp, kSq, kPitch };
     X(lt_sz,      "lt_sz",      24.0f,-24.f,  48.f, kLin, "semi", "Size"          ) \
                                                                                \
     /* ── DECAY ──────────────────────────────────────────────────────────── */ \
-    /* Macro knob: 0=short (rt60=0.05s, bloom=0.25, el_mix=0),              */ \
-    /*             1=long  (rt60=120s,  bloom=12,   el_mix=1).              */ \
-    /* Derive() linearly interpolates rt60_s, bloom, el_mix.                */ \
-    X(decay,      "decay",       0.3f,  0.f,   1.f, kLin, "",    "Decay"         ) \
+    /* Macro knob, exponential in time: rt60 = 0.3 s · 200^decay            */ \
+    /*   0 → 0.3 s   0.25 → 1.1 s   0.5 → 4.2 s   0.75 → 16 s   1 → 60 s    */ \
+    /* Every position now changes the tail (old map saturated above ~0.25). */ \
+    /* Derive() also sets el_mix = decay (early/late balance).              */ \
+    X(decay,      "decay",       0.5f,  0.f,   1.f, kLin, "",    "Decay"         ) \
                                                                                \
     /* ── OUTPUT FILTER ──────────────────────────────────────────────────── */ \
     /* Four-pole Moog ladder LP + first-order HP → parametric bandpass.      */ \
@@ -59,30 +60,40 @@ struct Params {
 #undef X
 
     // ── derived from decay ────────────────────────────────────────────────────
-    float rt60_s = 36.035f;  // 0.05 + decay * 119.95
-    float bloom  = 3.775f;   // 0.25 + decay * 11.75
-    float el_mix = 0.3f;     // decay
+    // (bloom is gone: it only multiplied rt60 inside the feedback gain, i.e. it
+    // was a second, hidden decay-length control, not a swell.)
+    float rt60_s = 4.243f;   // DecayToRt60(decay)
+    float el_mix = 0.5f;     // decay
 
     // ── permanently baked ─────────────────────────────────────────────────────
     float predelay_ms = 18.0f;
     float pd_sym      = 5.1f;
-    float er_sz       = 14.2f;
-    float er_sym      = 2.42f;
-    float er_dffs     = 0.576f;
+    // Early diffusers: was er_sz 14.2 → 39–62 ms allpasses, which at g≈0.58 are
+    // discrete echo generators (≈16 Hz flutter), not diffusers. Now 4.8–14 ms.
+    // Stage offsets live in early.h (kEarlyOffs), found by the same ratio search.
+    float er_sz       = 39.9f;
+    float er_sym      = 2.37f;
+    float er_dffs     = 0.60f;
     float mod_hz      = 0.87f;
-    float mod_ms      = 0.45f;
+    float mod_ms      = 1.0f;   // was 0.45: too shallow to smear loop modes
     float out_width   = 6.28f;
-    float lt_sym   = 2.5f;
+    float lt_sym   = 2.62f;   // was 2.5 → L/R 5 semis apart ≈ 4/3; see kLateOffs
     float lt_theta = 0.7853982f;
     float lt_dffs  = 0.494f;
     float chaos    = 0.94f;
     float sat      = 0.12f;
-    float hp_hz    = 4186.f;
+    float hp_hz    = 4186.f;  // early-section shelf only (not in a loop)
     float hp_db    = -0.1f;
+    // Late-loop HF damping: HF T60 = min(rt60 · ratio, max). See Late::_update_shelves.
+    // Measured octave-band T60 at rt60=16 s: 500 Hz 14 s, 2 k 8.5 s, 4 k 6 s, 8 k 4.4 s.
+    float lt_hf_hz    = 2000.f;
+    float lt_hf_ratio = 0.30f;
+    float lt_hf_max_s = 8.0f;
+
+    static float DecayToRt60(float d) { return 0.3f * powf(200.f, d); }
 
     void Derive() {
-        rt60_s = 0.05f + decay * 119.95f;
-        bloom  = 0.25f + decay * 11.75f;
+        rt60_s = DecayToRt60(decay);
         el_mix = decay;
     }
 };

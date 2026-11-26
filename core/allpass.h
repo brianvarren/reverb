@@ -60,6 +60,10 @@ public:
 
     float current_delay() const { return d_; }
 
+    // Read the internal line (the w signal) at a fractional delay, for output
+    // taps. One sample of timing offset vs. Process() is irrelevant for a tap.
+    float Tap(float d) const { return dl_.Read4pt(d); }
+
 private:
     DelayLine dl_;
     LoopShelf shelf_;

@@ -11,15 +11,18 @@
 // asymmetry (ErSym semitones). Adding cross-feed here smears the image and
 // makes the reverb sound vague; resist the temptation.
 //
-// Allpass stage offsets: +8, +4, +0 semitones above ErSz — irrational ratios
-// so the echo trains never realign at any Size.
+// Allpass stage offsets (kEarlyOffs) above ErSz. Not whole semitones: +8/+4/0
+// was an augmented triad, i.e. ratios of 2^(1/3) ≈ 5/4 with 3 steps = exactly an
+// octave, so echo trains realigned. Values from tools/ratio_search.py.
 //
 // 8 caller-supplied buffers (all zeroed, all same power-of-two size):
 //   [0]     predelay L
 //   [1]     predelay R
-//   [2..4]  allpass L stages 0,1,2  (offsets +8,+4,+0)
+//   [2..4]  allpass L stages 0,1,2  (offsets kEarlyOffs)
 //   [5..7]  allpass R stages 0,1,2
-// Recommended buf_sz: 4096 — covers ErSz down to pitch 18 (~2076 samples).
+// Allpass delays at the baked er_sz are 4.8–14 ms; buf_sz is set by predelay.
+
+static constexpr float kEarlyOffs[3] = { 13.88f, 6.32f, 0.f };
 
 class Early {
 public:
@@ -88,12 +91,11 @@ private:
         const float hb  = db_to_lin(p.hp_db);
         const float lf  = 20.f;
         const float lb  = 1.f;
-        const float offsets[3] = {8.f, 4.f, 0.f};
 
         for (int ch = 0; ch < 2; ++ch) {
             const float sz = (ch == 0) ? szL : szR;
             for (int st = 0; st < 3; ++st) {
-                const float d = pitch_to_samples(sz + offsets[st], fs);
+                const float d = pitch_to_samples(sz + kEarlyOffs[st], fs);
                 ap_[ch][st].SetGain(g);
                 ap_[ch][st].SetShelf(hf, hb, lf, lb, fs);
                 if (snap) ap_[ch][st].SnapDelay(d);

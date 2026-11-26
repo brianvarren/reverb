@@ -7,13 +7,16 @@
 #include "util.h"
 #include <cmath>
 
-// First-order DC-blocking highpass.  y[n] = x[n] - x[n-1] + R*y[n-1]
+// First-order DC-blocking highpass.  y[n] = g·(x[n] - x[n-1]) + R*y[n-1]
 // R=0.9995 ≈ 7 Hz highpass — gentle enough that bass blooms into the tail
 // rather than being progressively stripped over many loop passes.
+// g = (1+R)/2 normalises the Nyquist gain to exactly 1. Without it the blocker
+// has +0.002 dB of gain at HF — harmless once, but it sits inside the loop.
 struct DcBlock {
     float x1 = 0.f, y1 = 0.f;
     float Process(float x) {
-        float y = x - x1 + 0.9995f * y1;
+        constexpr float kR = 0.9995f, kG = 0.5f * (1.f + kR);
+        float y = kG * (x - x1) + kR * y1;
         x1 = x; y1 = y;
         return y;
     }
@@ -35,6 +38,26 @@ struct DcBlock {
 //   bufs[7]     long delay R
 //   bufs[8]     injection delay L         (inj_sz)
 //   bufs[9]     injection delay R
+// Diffuser pitch offsets above the long delay (semitones).
+// Deliberately NOT whole semitones: equal-tempered intervals are by design the
+// closest approximations to small-integer ratios (M3 ≈ 5/4, m3 ≈ 6/5, P4 ≈ 4/3),
+// so delays tuned to them make echo trains nearly realign → pitched/metallic
+// colour. These values (and lt_sym) come from a search that minimises the
+// worst-case closeness of any delay pair, L and R included, to p/q with q ≤ 8.
+// Re-run tools/ratio_search.py if you change any of them or lt_sym.
+static constexpr float kLateOffs[3] = { 8.65f, 6.42f, 2.20f };
+
+// Output tap positions (fraction of the *other* channel's long delay) and the
+// diffuser stage tapped. See Late::Process for why taps never share a line.
+static constexpr float kTapLongFrac = 0.41f;
+static constexpr float kTapDiffFrac = 0.73f;
+static constexpr int   kTapDiffStage = 1;
+
+// Per-pass loop gain ceiling. Every in-loop element is now ≤ 0 dB (no makeup
+// gain, normalised DC blocker), so this is a hard backstop, not the thing that
+// sets long decays. 0.9995 allows ~60 s even at the smallest Size.
+static constexpr float kFbCap = 0.9995f;
+
 class Late {
 public:
     void Init(float* bufs[10], size_t diff_sz, size_t long_sz, size_t inj_sz,
@@ -79,8 +102,8 @@ public:
         }
         smL_[3].Reset(tgtL_[3]);  dL_[3] = tgtL_[3];
         smR_[3].Reset(tgtR_[3]);  dR_[3] = tgtR_[3];
+        _update_fb(fs, p.rt60_s);
         _update_shelves(p, fs);
-        _update_fb(fs, p.rt60_s, p.bloom, p.sat);
         _update_lfo(p, fs);
         smInj_[0].Reset(inj_base_); d_inj_[0] = inj_base_;
         smInj_[1].Reset(inj_base_); d_inj_[1] = inj_base_;
@@ -102,8 +125,8 @@ public:
             dL_[3] = prev_dL3;
             dR_[3] = prev_dR3;
         }
+        _update_fb(fs, p.rt60_s);
         _update_shelves(p, fs);
-        _update_fb(fs, p.rt60_s, p.bloom, p.sat);
         _update_lfo(p, fs);
         d_inj_[0] = smInj_[0].Process(inj_base_);
         d_inj_[1] = smInj_[1].Process(inj_base_);
@@ -150,12 +173,28 @@ public:
         aL = _sat(aL);  // harmonic generation before long delay
         aR = _sat(aR);
 
-        float rawL = longL_.Read4pt(dL_[3] + mod_[3]);  longL_.Write(aL);
-        float rawR = longR_.Read4pt(dR_[3] + mod_[7]);  longR_.Write(aR);
-        outL = (rawL + longL_.Read4pt(dL_[3] * 0.382f + mod_[3])
-                     + longL_.Read4pt(dL_[3] * 0.618f + mod_[3])) * (1.f/3.f);
-        outR = (rawR + longR_.Read4pt(dR_[3] * 0.382f + mod_[7])
-                     + longR_.Read4pt(dR_[3] * 0.618f + mod_[7])) * (1.f/3.f);
+        float rawL = longL_.Read4pt(dL_[3] + mod_[3]);
+        float rawR = longR_.Read4pt(dR_[3] + mod_[7]);
+
+        // Output taps. Rule: an output channel never reads the same delay line
+        // twice. Two taps of one line summed at a fixed spacing Δ are an FIR
+        // comb (notches every 1/Δ Hz) applied to the whole tail — that was the
+        // old 0.382/0.618/1.0 golden tap set, and the dominant metallic colour.
+        // Instead: own long line + the other channel's long line + one of the
+        // other channel's diffusers, with alternating signs (cancels residual
+        // common-mode correlation) and equal-power normalisation.
+        // Taps are read before the writes below, so the read positions are the
+        // same convention as rawL/rawR.
+        constexpr float kN = 0.57735027f;  // 1/√3: three ~decorrelated taps
+        const int ks = kTapDiffStage;
+        outL = kN * (rawL
+                     - longR_.Read4pt(dR_[3] * kTapLongFrac + mod_[7])
+                     + dlR_[ks].Tap(dR_[ks] * kTapDiffFrac + mod_[ks + 4]));
+        outR = kN * (rawR
+                     - longL_.Read4pt(dL_[3] * kTapLongFrac + mod_[3])
+                     + dlL_[ks].Tap(dL_[ks] * kTapDiffFrac + mod_[ks]));
+        longL_.Write(aL);
+        longR_.Write(aR);
 
         fbL_ = dcL_.Process(rawL) * fb_gain_;
         fbR_ = dcR_.Process(rawR) * fb_gain_;
@@ -173,17 +212,31 @@ private:
         float szL = p.lt_sz - p.lt_sym;
         float szR = p.lt_sz + p.lt_sym;
         for (int k = 0; k < 3; ++k) {
-            float off = float(9 - 3 * k);  // +9, +6, +3
-            tgtL_[k] = pitch_to_samples(szL + off, fs);
-            tgtR_[k] = pitch_to_samples(szR + off, fs);
+            tgtL_[k] = pitch_to_samples(szL + kLateOffs[k], fs);
+            tgtR_[k] = pitch_to_samples(szR + kLateOffs[k], fs);
         }
         tgtL_[3] = pitch_to_samples(szL, fs);
         tgtR_[3] = pitch_to_samples(szR, fs);
     }
 
+    // Frequency-dependent decay. The 4 in-loop shelves (3 stage + chain) set the
+    // HF decay time as a *ratio* of the broadband T60, so damping stays musically
+    // consistent across every Size and Decay instead of being a fixed dB/pass
+    // (a fixed dB/pass means big rooms barely damp and small rooms go dull).
+    //   per-pass HF gain wanted  = 10^(−3·D / (fs·T60_hf))
+    //   per-pass broadband gain  = fb_gain_            (already applied)
+    //   → total shelf gain at HF = wanted / fb_gain_,  split across 4 shelves.
+    // T60_hf is also capped at lt_hf_max_s so very long tails still darken.
     void _update_shelves(const Params& p, float fs) {
-        float hf = p.hp_hz;
-        float hb = db_to_lin(p.hp_db);
+        const float D      = loop_length_samples();
+        const float t60_hf = fminf(p.rt60_s * p.lt_hf_ratio, p.lt_hf_max_s);
+        float hb = 1.f;
+        if (t60_hf < p.rt60_s && D > 0.f) {
+            const float g_hf  = powf(10.f, -3.f * (D / fs) / t60_hf);
+            const float ratio = fminf(g_hf / fmaxf(fb_gain_, 1e-6f), 1.f);
+            hb = powf(ratio, 0.25f);
+        }
+        float hf = p.lt_hf_hz;
         float lf = 20.f;
         float lb = 1.f;
         for (int k = 0; k < 3; ++k) {
@@ -199,28 +252,22 @@ private:
         chainR_.SetParams(hf, hb, lf, lb, fs);
     }
 
-    void _update_fb(float fs, float rt60_s, float bloom, float sat) {
+    void _update_fb(float fs, float rt60_s) {
         float D = loop_length_samples();
-        fb_gain_ = powf(10.f, -3.f * (D / fs) / (rt60_s * bloom));
-        fb_gain_ = fminf(fb_gain_, 0.995f);
-        // Makeup gain: compensate tanh gain reduction at a reference level of 0.1.
-        // Ideal = ref * drive / tanh(drive * ref); clamped so small-signal loop gain < 1.
-        // (tanh slope = 1 at origin, so total gain = fb_gain * makeup must stay < 1.)
-        if (sat > 0.001f) {
-            const float kRef = 0.1f;
-            float drive = 1.f + sat * 4.f;
-            float ideal = kRef * drive / tanhf(drive * kRef);
-            makeup_  = fminf(ideal, 0.999f / fb_gain_);
-        } else {
-            makeup_ = 1.f;
-        }
+        fb_gain_ = powf(10.f, -3.f * (D / fs) / rt60_s);
+        fb_gain_ = fminf(fb_gain_, kFbCap);
+        // No makeup gain on the saturator. tanh(d·x)/d already has slope 1 at
+        // the origin, so it is transparent at small signals and only squashes
+        // peaks. The old makeup (>1) raised the small-signal loop gain to ~0.999
+        // whatever rt60 asked for, which roughly doubled every long tail and
+        // made the Decay knob dead above ~0.25.
     }
 
     void _update_lfo(const Params& p, float fs) {
         chaos_     = p.chaos;
         mod_depth_ = p.mod_ms * 0.001f * fs;
         inj_base_  = mod_depth_ + 1.f;  // injection base: center depth + 1 sample guard
-        drive_     = 1.f + p.sat * 4.f;   // range [1, 5]; makeup compensates gain loss
+        drive_     = 1.f + p.sat * 4.f;   // range [1, 5]; unity small-signal gain
         // LFO rates spread by φ^(k/7) at chaos=1, all identical at chaos=0.
         // Slots 0..3 = L diffusers + long; 4..7 = R counterparts; 8..9 = injection L/R.
         static const float kLfoRatios[10] = {
@@ -236,7 +283,7 @@ private:
 
     float _sat(float x) const {
         if (drive_ <= 1.001f) return x;
-        return tanhf(drive_ * x) / drive_ * makeup_;
+        return tanhf(drive_ * x) / drive_;
     }
 
     // Advances 8 independent LFOs and 8 slow chaos oscillators.
@@ -280,7 +327,6 @@ private:
     float        mod_depth_       = 0.f;
     float        inj_base_        = 1.f;
     float        drive_           = 1.f;
-    float        makeup_          = 1.f;
     float        block_sz_   = 48.f;
     float        mod_[10]     = {};
     float        mod_inc_[10] = {};

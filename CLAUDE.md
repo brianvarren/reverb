@@ -75,11 +75,22 @@ Readouts: pitch parameters resolved to ms and Hz, loop length, `fb_gain` (with
 a CAP flag), a normalised tail-envelope graph, and measured **T60 / EDT** from
 Schroeder backward integration of the decay after each trigger.
 
-EDT is the number to watch when tuning `bloom`: EDT well above T60 means the
-tail is still building after the source stops, which is the SMD swell. Measured
-T60 always lands short of `rt60_s x bloom` — four in-loop shelf passes per
-round trip absorb energy the formula does not account for. At defaults the
-12.6 s target measures ~8.4 s.
+Decay maps exponentially: `rt60_s = 0.3 s · 200^decay` (0.3 s → 60 s). Measured
+T60 lands ~10–15% short of `rt60_s` because the in-loop HF damping removes
+energy too. HF decay is set as a ratio of rt60 (`lt_hf_ratio`, capped by
+`lt_hf_max_s`), so it scales with Size and Decay. EDT well above T60 would mean
+the tail is still building after the source stops (a swell).
+
+## Tuning rules learned the hard way (Nov 2026 "metallic" fix)
+
+- Never sum two taps of the same delay line into an output: fixed spacing = FIR
+  comb on the whole tail. Taps come from different lines (see `Late::Process`).
+- Every in-loop element must be ≤ 0 dB at small signals — no makeup gain on the
+  saturator, normalised DC blocker. Otherwise the loop gain ignores rt60.
+- Delay offsets are not whole semitones. Equal-tempered intervals approximate
+  simple ratios, so echo trains realign. Use `tools/ratio_search.py`.
+- Early allpasses stay ≤ 15 ms; longer unmodulated allpasses flutter.
+- `tests/test_main.cpp` "Tuning:" cases guard each of these.
 
 miniaudio.h is fetched by CMake on first configure and gitignored.
 

@@ -100,7 +100,7 @@ public:
     // that makes a raw envelope unmeasurable, and the result is the curve the
     // ear actually integrates. T60 comes from a least-squares fit over the
     // -5 to -35 dB span (the T30 convention, doubled); EDT from 0 to -10 dB,
-    // sextupled. EDT well above T60 is exactly what "bloom" means numerically:
+    // sextupled. EDT well above T60 is what a "bloom"/swell means numerically:
     // the tail is still building while the total energy has already peaked.
     void AnalyseDecay() {
         if (!cap_ready_.load(std::memory_order_acquire)) return;
@@ -266,9 +266,8 @@ private:
         // finished, so the measurement describes the reverb and not the burst.
         if (!cap_ready_.load(std::memory_order_acquire)) {
             const float dc = ap_[kP_decay].load(std::memory_order_relaxed);
-            const float rt = 0.05f + dc * 119.95f;
-            const float bl = 0.25f + dc * 11.75f;
-            long want = long((rt * bl * 1.3f + 0.5f) * fs_ / float(kBlock));
+            const float rt = Params::DecayToRt60(dc);
+            long want = long((rt * 1.3f + 0.5f) * fs_ / float(kBlock));
             if (want > kCapMax) want = kCapMax;
             if (want < 256)     want = 256;
             cap_want_ = want;

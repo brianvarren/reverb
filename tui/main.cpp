@@ -645,18 +645,18 @@ int main(int argc, char** argv) {
             const float szR  = dp.lt_sz + dp.lt_sym;
             float D = 0.f;
             for (int k = 0; k < 3; ++k) {
-                const float o = float(9 - 3 * k);
+                const float o = kLateOffs[k];
                 D += 0.5f * (pitch_to_samples(szL + o, fs) + pitch_to_samples(szR + o, fs));
             }
             D += 0.5f * (pitch_to_samples(szL, fs) + pitch_to_samples(szR, fs));
             const float rt = dp.rt60_s;
-            const float bl = dp.bloom;
-            float fb = powf(10.f, -3.f * (D / fs) / (rt * bl));
-            const bool capped = fb > 0.995f;
-            if (capped) fb = 0.995f;
+            float fb = powf(10.f, -3.f * (D / fs) / rt);
+            const bool capped = fb > kFbCap;
+            if (capped) fb = kFbCap;
             snprintf(line, sizeof line,
-                     "LATE   loop %.1f ms   fb %.5f%s   rt60 %.1f s   target decay %.1f s",
-                     D * 1000.f / fs, fb, capped ? " CAP" : "", rt, rt * bl);
+                     "LATE   loop %.1f ms   fb %.5f%s   rt60 %.1f s   HF rt60 %.1f s",
+                     D * 1000.f / fs, fb, capped ? " CAP" : "", rt,
+                     fminf(rt * dp.lt_hf_ratio, dp.lt_hf_max_s));
             put(y++, line);
         }
         {
@@ -665,8 +665,8 @@ int main(int argc, char** argv) {
             const float olp    = ofreq * powf(2.f, owidth * 0.5f);
             const float ohp    = ofreq / powf(2.f, owidth * 0.5f);
             snprintf(line, sizeof line,
-                     "EQ     loop HP 4186Hz/-0.1dB (baked)    out LP %.0fHz  HP %.0fHz",
-                     olp, ohp);
+                     "EQ     loop HF damp > %.0fHz (baked)    out LP %.0fHz  HP %.0fHz",
+                     dp.lt_hf_hz, olp, ohp);
             put(y++, line);
         }
 

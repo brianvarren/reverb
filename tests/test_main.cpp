@@ -13,6 +13,9 @@
 #include "early.h"
 #include "rotation.h"
 #include "late.h"
+#include "reverb.h"
+#include <algorithm>
+#include <numeric>
 
 // ── §9.1  pitch_to_samples ───────────────────────────────────────────────────
 
@@ -436,8 +439,8 @@ static Params flat_late_params(float rt60_s, float lt_sz = 24.f) {
     p.lt_sz   = lt_sz;
     p.lt_sym  = 0.f;    // override baked 2.5: symmetric → L==R, cleaner T60 read
     p.rt60_s  = rt60_s;
-    p.bloom   = 1.f;    // honest T60 with correct D sum
-    p.hp_db   = 0.f;    // flat high shelf for T60 measurement
+    p.lt_hf_ratio = 1.f;     // flat in-loop shelves for a broadband T60 read
+    p.lt_hf_max_s = 1e6f;
     p.lt_dffs = 0.f;    // pure delay: allpass hidden storage breaks the fb_gain formula
     return p;
 }
@@ -496,7 +499,7 @@ static double measure_t60(float rt60_s, float lt_sz = 24.f) {
 }
 
 TEST_CASE("Late: measured T60 matches formula within 15% at three rt60_s values") {
-    // Flat shelves + bloom=1 → decay driven by fb_gain. The DC-blocking highpass
+    // Flat shelves → decay driven by fb_gain. The DC-blocking highpass
     // in the loop causes non-exponential EDC, so Schroeder extrapolation has a
     // systematic bias of ~7-11%; 15% tolerance catches real bugs while staying realistic.
     for (float rt60_s : {0.5f, 2.0f, 8.0f}) {
@@ -619,15 +622,15 @@ TEST_CASE("Late: modulation is live — output diverges from unmodulated referen
 }
 
 TEST_CASE("Late: no NaN/Inf after 30-second white-noise soak at fb_gain=0.995 clamp") {
-    // Stage 8: stress-test at maximum fb_gain. rt60=60s, bloom=3.14 pushes
-    // computed fb_gain to 0.9965, which the clamp holds at 0.995.
+    // Stage 8: stress-test at maximum fb_gain. rt60=10000 s at the smallest
+    // loop pushes computed fb_gain past kFbCap, which the clamp holds.
     constexpr float  kFS     = 48000.f;
     constexpr size_t kDiffSz = kBufDiff;
     constexpr size_t N       = size_t(30.f * kFS);
 
     Params p;
-    p.rt60_s = 60.f;    // → fb_gain hits 0.995 clamp
-    p.bloom  = 3.14f;
+    p.rt60_s = 10000.f; // → fb_gain hits kFbCap
+    p.lt_sz  = 48.f;    // shortest loop = highest computed fb_gain
 
     std::vector<float> storage(8 * kDiffSz + 2 * kBufInj, 0.f);
     float* bufs[10];
@@ -654,4 +657,184 @@ TEST_CASE("Late: no NaN/Inf after 30-second white-noise soak at fb_gain=0.995 cl
     }
     CHECK(!any_bad);
     CHECK(peak < 100.f);   // bounded, not runaway
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Tuning regressions — one test per cause of the "metallic" tail (Nov 2026).
+// Each of these failed on the pre-fix code; the comment says by how much.
+// ═════════════════════════════════════════════════════════════════════════════
+
+namespace tuning {
+
+constexpr float kFS = 48000.f;
+
+// Full Reverb through the firmware block path, wet only.
+struct Rig {
+    std::vector<float> mem;
+    float* bufs[18];
+    Reverb rv;
+    explicit Rig(const Params& p) {
+        mem.assign(8 * kBufEarly + 6 * kBufDiff + 2 * kBufLong + 2 * kBufInj, 0.f);
+        float* m = mem.data();
+        for (int i = 0; i < 8; ++i)  { bufs[i] = m; m += kBufEarly; }
+        for (int i = 8; i < 14; ++i) { bufs[i] = m; m += kBufDiff;  }
+        for (int i = 14; i < 16; ++i){ bufs[i] = m; m += kBufLong;  }
+        for (int i = 16; i < 18; ++i){ bufs[i] = m; m += kBufInj;   }
+        rv.Init(bufs, kBufEarly, kBufDiff, kBufLong, kBufInj, kFS, 48);
+        rv.SnapParams(p);
+    }
+};
+
+static std::vector<float> impulse_L(Params p, float secs, float amp = 1.f) {
+    p.dw_mix = 1.f;
+    Rig rig(p);
+    const size_t N = size_t(secs * kFS);
+    std::vector<float> out(N);
+    for (size_t n = 0; n < N; ++n) {
+        if (n % 48 == 0) rig.rv.UpdateBlock(p);
+        float x = (n == 0) ? amp : 0.f, l, r;
+        rig.rv.Process(x, x, l, r);
+        out[n] = l;
+    }
+    return out;
+}
+
+// Schroeder T60 from a −5…−35 dB least-squares fit of the EDC.
+static double t60_of(const std::vector<float>& x) {
+    std::vector<double> edc(x.size() + 1, 0.0);
+    for (size_t n = x.size(); n-- > 0;) edc[n] = edc[n + 1] + double(x[n]) * x[n];
+    const double e0 = edc[0];
+    double sx = 0, sy = 0, sxx = 0, sxy = 0; int k = 0;
+    for (size_t n = 0; n < x.size(); ++n) {
+        const double db = 10.0 * std::log10(edc[n] / e0 + 1e-300);
+        if (db > -5.0) continue;
+        if (db < -35.0) break;
+        const double t = double(n) / kFS;
+        sx += t; sy += db; sxx += t * t; sxy += t * db; ++k;
+    }
+    REQUIRE(k > 100);
+    const double slope = (k * sxy - sx * sy) / (k * sxx - sx * sx);
+    return -60.0 / slope;
+}
+
+static double max_abs_autocorr(const std::vector<float>& x, size_t a, size_t b,
+                               size_t lag_lo, size_t lag_hi) {
+    std::vector<double> y(x.begin() + a, x.begin() + b);
+    const double mean = std::accumulate(y.begin(), y.end(), 0.0) / y.size();
+    for (auto& v : y) v -= mean;
+    double r0 = 0; for (double v : y) r0 += v * v;
+    double worst = 0;
+    for (size_t L = lag_lo; L < lag_hi; L += 2) {     // stride 2: plenty for ms-scale lags
+        double r = 0;
+        for (size_t i = L; i < y.size(); ++i) r += y[i] * y[i - L];
+        worst = std::max(worst, std::abs(r / r0));
+    }
+    return worst;
+}
+
+} // namespace tuning
+
+TEST_CASE("Tuning: output taps form no static comb (autocorr of tail < 0.15)") {
+    // Old golden-ratio taps from one line: |r| = 0.32 @13.5 ms (Size 24) and
+    // 0.30 @27.5 ms (Size 3.36). Now: < 0.10 measured.
+    using namespace tuning;
+    for (float sz : {24.f, 3.36f}) {
+        Params p; p.lt_sz = sz; p.decay = 0.5f; p.Derive();
+        auto x = impulse_L(p, 3.f);
+        const double r = max_abs_autocorr(x, size_t(1.0f * kFS), size_t(3.0f * kFS),
+                                          size_t(0.002f * kFS), size_t(0.25f * kFS));
+        INFO("lt_sz=" << sz << " max |autocorr|=" << r);
+        CHECK(r < 0.15);
+    }
+}
+
+TEST_CASE("Tuning: Decay knob tracks DecayToRt60 within 25%, no dead zone") {
+    // Old: 18 s at decay 0.1, then ~350 s flat from 0.25 to 1 (cap + makeup).
+    using namespace tuning;
+    double prev = 0.0;
+    for (float d : {0.25f, 0.5f, 0.75f}) {
+        Params p; p.decay = d; p.Derive();
+        const double target = Params::DecayToRt60(d);
+        const double meas   = t60_of(impulse_L(p, float(target * 1.6 + 1.0)));
+        INFO("decay=" << d << " target=" << target << " measured=" << meas);
+        CHECK(std::abs(meas / target - 1.0) < 0.25);
+        CHECK(meas > prev * 2.0);           // each quarter-turn ≈ ×3.8 in time
+        prev = meas;
+    }
+}
+
+TEST_CASE("Tuning: in-loop saturator adds no small-signal gain (T60 unchanged)") {
+    // Old makeup gain pushed small-signal loop gain to ~0.999: T60 doubled
+    // (84 s → 170 s at decay 0.3). Now sat on/off must agree within 5%.
+    using namespace tuning;
+    Params on;  on.decay = 0.6f;  on.Derive();
+    Params off = on; off.sat = 0.f;
+    const double t_on  = t60_of(impulse_L(on,  12.f, 0.05f));
+    const double t_off = t60_of(impulse_L(off, 12.f, 0.05f));
+    INFO("sat on " << t_on << " s, off " << t_off << " s");
+    CHECK(std::abs(t_on / t_off - 1.0) < 0.05);
+}
+
+TEST_CASE("Tuning: highs decay faster than lows (HF T60 < 0.6 × LF T60)") {
+    // Old in-loop shelf was −0.1 dB: HF and LF decayed together.
+    using namespace tuning;
+    Params p; p.decay = 0.75f; p.out_freq = 4000.f; p.Derive();  // open output filter
+    auto x = impulse_L(p, 30.f);
+    // Two cascaded one-poles each side: < 500 Hz vs > 5 kHz.
+    std::vector<float> lo(x.size()), hi(x.size());
+    OnePole a, b, c, d;
+    a.SetCutoff(500.f, kFS);  b.SetCutoff(500.f, kFS);
+    c.SetCutoff(5000.f, kFS); d.SetCutoff(5000.f, kFS);
+    for (size_t n = 0; n < x.size(); ++n) {
+        lo[n] = b.LP(a.LP(x[n]));
+        const float h1 = x[n] - c.LP(x[n]);
+        hi[n] = h1 - d.LP(h1);
+    }
+    const double tl = t60_of(lo), th = t60_of(hi);
+    INFO("LF T60 " << tl << " s, HF T60 " << th << " s");
+    CHECK(th < 0.6 * tl);
+}
+
+TEST_CASE("Tuning: no delay pair sits within 10 cents of a simple ratio (q ≤ 6)") {
+    // Old semitone offsets: late worst pair 2.0 cents, early 0.36 cents.
+    Params p;
+    auto worst_cents = [](const std::vector<float>& pitches) {
+        double m = 1e9;
+        for (size_t i = 0; i < pitches.size(); ++i)
+            for (size_t j = i + 1; j < pitches.size(); ++j) {
+                const double c = 100.0 * std::abs(double(pitches[i]) - pitches[j]);
+                for (int q = 1; q <= 6; ++q)
+                    for (int pn = q; pn <= 4 * q; ++pn)
+                        m = std::min(m, std::abs(c - 1200.0 * std::log2(double(pn) / q)));
+            }
+        return m;
+    };
+    const float s2l = 2.f * p.lt_sym, s2e = 2.f * p.er_sym;
+    std::vector<float> late, early;
+    for (float o : {kLateOffs[0], kLateOffs[1], kLateOffs[2], 0.f}) { late.push_back(o); late.push_back(o + s2l); }
+    for (float o : kEarlyOffs) { early.push_back(o); early.push_back(o + s2e); }
+    INFO("late worst " << worst_cents(late) << " c, early worst " << worst_cents(early) << " c");
+    CHECK(worst_cents(late)  >= 10.0);
+    CHECK(worst_cents(early) >= 10.0);
+}
+
+TEST_CASE("Tuning: early allpasses are diffusers (≤ 15 ms), not flutter echoes") {
+    // Old baked er_sz 14.2 → 39–62 ms stages: ≈16 Hz flutter at low Decay.
+    Params p;
+    for (float sym : {-p.er_sym, p.er_sym})
+        for (float o : kEarlyOffs) {
+            const float ms = 1000.f * pitch_to_samples(p.er_sz + sym + o, 48000.f) / 48000.f;
+            INFO("stage delay " << ms << " ms");
+            CHECK(ms <= 15.f);
+            CHECK(ms >= 2.f);
+        }
+}
+
+TEST_CASE("Tuning: DC blocker never exceeds unity gain (Nyquist)") {
+    // Old: 2/(1+R) = 1.00025. Bound leaves room for float rounding (~6e-5,
+    // amplified by the 1/(1−R) recursion) but still catches the old gain.
+    DcBlock dc; float y = 0.f, peak = 0.f;
+    for (int n = 0; n < 200000; ++n) { y = dc.Process((n & 1) ? 1.f : -1.f); if (n > 100000) peak = std::max(peak, std::abs(y)); }
+    CHECK(peak < 1.0001f);
 }
