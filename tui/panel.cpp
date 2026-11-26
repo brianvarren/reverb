@@ -27,8 +27,10 @@
 #include <sched.h>
 #include <sys/mman.h>
 #include <sys/select.h>
+#include <string>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 #include "engine.h"
 #include "params.h"
@@ -241,6 +243,77 @@ static void draw_bar(int slot, int count, int ncols, int top, int bot, int pidx)
     if (act) attroff(A_BOLD);
 }
 
+// ── per-parameter help text (how it affects the sound) ───────────────────────
+static const char* param_desc(int b) {
+    if (b == SLEW_IDX)
+        return "Glide time for every slider: how long a parameter takes to reach "
+               "a new value after you move its fader. 0 = instant (also removes "
+               "zipper noise on fine moves). Raise it for slow morphs between settings.";
+    const char* k = ParamTable()[b].key;
+    if (!strcmp(k, "lt_sz"))       return "Overall size of the late reverb. Lower pitch = longer delay lines = a bigger, slower space; higher = tighter and smaller.";
+    if (!strcmp(k, "decay"))       return "How long the tail rings out. Exponential: ~0.3 s at minimum up to ~60 s at maximum.";
+    if (!strcmp(k, "out_freq"))    return "Centre frequency of the output band-pass. Lower is darker/duller, higher is brighter and thinner.";
+    if (!strcmp(k, "dw_mix"))      return "Dry/wet balance. 0 = input only, 1 = reverb only. For a send/return (like this Tonverk setup) keep it at 1.";
+    if (!strcmp(k, "predelay_ms")) return "Silence before the reverb begins. More predelay separates the dry sound from the tail, adding clarity and a sense of distance.";
+    if (!strcmp(k, "pd_sym"))      return "Left/right offset of the predelay. Widens the stereo image of the reverb's onset.";
+    if (!strcmp(k, "er_sz"))       return "Size of the early reflections (the first echoes before the tail). Sets the initial room signature and texture.";
+    if (!strcmp(k, "er_sym"))      return "Left/right spread of the early reflections. More = a wider early stereo image.";
+    if (!strcmp(k, "er_dffs"))     return "Early diffusion. Higher = denser, smoother early reflections; lower = more discrete, echoey.";
+    if (!strcmp(k, "mod_hz"))      return "Rate of the tail's modulation LFOs. Slow = gentle drift; fast = shimmer/chorus.";
+    if (!strcmp(k, "mod_ms"))      return "Depth of delay-line modulation. More smears the loop resonances, keeping the tail lush and less metallic.";
+    if (!strcmp(k, "chaos"))       return "How much the modulation LFO rates spread apart. Higher = more decorrelated, three-dimensional movement.";
+    if (!strcmp(k, "lt_sym"))      return "Left/right size offset of the late loop. More = a wider stereo tail (it also shifts the delay ratios).";
+    if (!strcmp(k, "lt_theta"))    return "Rotation angle of the late diffuser's mixing matrix. ~0.79 (pi/4) is balanced; other values change the diffusion character.";
+    if (!strcmp(k, "lt_dffs"))     return "Late diffusion. Higher = a smoother, denser tail; lower = more individual echoes in the tail.";
+    if (!strcmp(k, "sat"))         return "Saturation drive inside the loop. Adds harmonics and warmth and gently compresses peaks as the tail builds.";
+    if (!strcmp(k, "lt_hf_hz"))    return "Corner frequency for high-frequency damping. Content above this darkens as the tail decays.";
+    if (!strcmp(k, "lt_hf_ratio")) return "How much faster the highs decay than the overall tail. Lower = darker tail; 1 = highs decay with everything else.";
+    if (!strcmp(k, "lt_hf_max_s")) return "Ceiling on the HF decay time, so even very long tails still darken instead of ringing bright forever.";
+    if (!strcmp(k, "out_width"))   return "Width of the output band-pass in octaves. Narrow = focused/resonant; wide = full-range.";
+    if (!strcmp(k, "hp_hz"))       return "High-shelf frequency in the early section (not in the loop). Shapes the brightness of the early reflections.";
+    if (!strcmp(k, "hp_db"))       return "Gain of that early high shelf. Negative darkens the early reflections.";
+    return "(no description)";
+}
+
+// ── centered info overlay for one parameter ──────────────────────────────────
+static void draw_info(int b, int ncols, int nrows) {
+    const char* txt = param_desc(b);
+    int bw = ncols - 8; if (bw > 62) bw = 62; if (bw < 24) bw = 24;
+    const int tw = bw - 4;                       // wrap width inside margins
+
+    std::vector<std::string> lines;
+    std::string cur, word;
+    auto flush = [&](){
+        if (word.empty()) return;
+        if (cur.empty()) cur = word;
+        else if ((int)(cur.size() + 1 + word.size()) <= tw) cur += " " + word;
+        else { lines.push_back(cur); cur = word; }
+        word.clear();
+    };
+    for (const char* p = txt; ; ++p) {
+        if (*p == ' ' || *p == '\0') { flush(); if (*p == '\0') break; }
+        else word += *p;
+    }
+    if (!cur.empty()) lines.push_back(cur);
+
+    const int bh = (int)lines.size() + 5;        // title, gap, lines, gap, hint
+    int x0 = (ncols - bw) / 2, y0 = (nrows - bh) / 2;
+    if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0;
+
+    char title[80];
+    const float v = fader_val(b);
+    snprintf(title, sizeof title, "%s = %.2f %s", fader_label(b), v, fader_unit(b));
+
+    attron(A_REVERSE);
+    for (int r = 0; r < bh; ++r)
+        for (int c = 0; c < bw; ++c) mvaddch(y0 + r, x0 + c, ' ');
+    attron(A_BOLD); mvprintw(y0 + 1, x0 + 2, "%.*s", bw - 4, title); attroff(A_BOLD);
+    for (int i = 0; i < (int)lines.size(); ++i)
+        mvprintw(y0 + 3 + i, x0 + 2, "%s", lines[i].c_str());
+    mvprintw(y0 + bh - 2, x0 + 2, "tap anywhere to close");
+    attroff(A_REVERSE);
+}
+
 int main(int argc, char** argv) {
     const char* params_path = "params.txt";
     const char* touch_node  = "/dev/input/event8";
@@ -269,55 +342,66 @@ int main(int argc, char** argv) {
     if (has_colors()) { start_color(); use_default_colors(); }
 
     const int nPages = (NB + PAGE_SIZE - 1) / PAGE_SIZE;
+    int  info     = -1;                 // param whose info overlay is open (-1 none)
+    bool was_down = false;
     while (g_sh.run.load()) {
         int page = g_sh.page.load();
         int ch = getch();
-        if      (ch == 'q' || ch == 'Q')           { g_sh.run.store(false); break; }
-        else if (ch == ']' || ch == KEY_RIGHT)     { if (page < nPages - 1) g_sh.page.store(page = page + 1); }
-        else if (ch == '[' || ch == KEY_LEFT)      { if (page > 0)          g_sh.page.store(page = page - 1); }
-        else if (ch >= '1' && ch <= '9')           { int p = ch - '1'; if (p < nPages) g_sh.page.store(page = p); }
+        if      (ch == 'q' || ch == 'Q')       { g_sh.run.store(false); break; }
+        else if (ch == ']' || ch == KEY_RIGHT) { if (page < nPages - 1) g_sh.page.store(page = page + 1); info = -1; }
+        else if (ch == '[' || ch == KEY_LEFT)  { if (page > 0)          g_sh.page.store(page = page - 1); info = -1; }
+        else if (ch >= '1' && ch <= '9')       { int p = ch - '1'; if (p < nPages) g_sh.page.store(page = p); info = -1; }
 
         const int ncols = COLS, nrows = LINES;
         const int tab_lo = 1, tab_hi = 5;            // tab bar occupies rows 1..4
         const int fad_top = 6, fad_bot = nrows - 4;  // big faders below it
 
+        const bool down  = g_sh.tdown.load();
+        const bool press = down && !was_down;        // rising edge = a fresh tap
+
         // ── touch hit-test (UI thread owns the layout) ──
-        if (g_sh.tdown.load()) {
+        if (info >= 0) {
+            if (press) info = -1;                    // overlay open: a tap dismisses it (consumed)
+            g_sh.active.store(-1);
+        } else if (down) {
             const float fx  = g_sh.tx.load() / 1000.f;
             const float fy  = g_sh.ty.load() / 1000.f;
             const int   row = (int)(fy * nrows);
+            int cnt = NB - page * PAGE_SIZE; if (cnt > PAGE_SIZE) cnt = PAGE_SIZE;
+            int slot = (int)(fx * cnt); if (slot < 0) slot = 0; if (slot >= cnt) slot = cnt - 1;
             if (row >= tab_lo && row < tab_hi && nPages > 1) {
-                int p = (int)(fx * nPages);
-                if (p < 0) p = 0; if (p >= nPages) p = nPages - 1;
+                int p = (int)(fx * nPages); if (p < 0) p = 0; if (p >= nPages) p = nPages - 1;
                 g_sh.page.store(page = p);
                 g_sh.active.store(-1);
             } else if (row >= fad_top && row <= fad_bot && fad_bot > fad_top) {
-                int cnt = NB - page * PAGE_SIZE; if (cnt > PAGE_SIZE) cnt = PAGE_SIZE;
-                int slot = (int)(fx * cnt);
-                if (slot < 0) slot = 0; if (slot >= cnt) slot = cnt - 1;
                 const int pidx = page * PAGE_SIZE + slot;
                 float frac = float(fad_bot - row) / float(fad_bot - fad_top);
                 if (frac < 0) frac = 0; if (frac > 1) frac = 1;
                 fader_set(pidx, frac);
                 g_sh.active.store(pidx);
+            } else if (row > fad_bot) {               // label/value strip → info on tap
+                if (press) info = page * PAGE_SIZE + slot;
+                g_sh.active.store(-1);
             } else {
                 g_sh.active.store(-1);
             }
         } else {
             g_sh.active.store(-1);
         }
+        was_down = down;
 
         int count = NB - page * PAGE_SIZE; if (count > PAGE_SIZE) count = PAGE_SIZE;
 
         // ── draw ──
         erase();
-        mvprintw(0, 0, "verb_panel  %s per=%lu  cpu=%.0f%%  xruns=%ld  peak=%.0fdB   page %d/%d   [ ] tab  q quit",
+        mvprintw(0, 0, "verb_panel  %s per=%lu  cpu=%.0f%%  xruns=%ld  peak=%.0fdB   page %d/%d   [ ] tab   tap label = info   q quit",
                  g_sh.dev, (unsigned long)g_sh.period, eng.cpu_load() * 100.0,
                  g_sh.xruns.load(), eng.peak_db(), page + 1, nPages);
         draw_tabs(ncols, tab_lo, tab_hi, nPages, page);
         if (fad_bot > fad_top)
-            for (int slot = 0; slot < count; ++slot)
-                draw_bar(slot, count, ncols, fad_top, fad_bot, page * PAGE_SIZE + slot);
+            for (int slot2 = 0; slot2 < count; ++slot2)
+                draw_bar(slot2, count, ncols, fad_top, fad_bot, page * PAGE_SIZE + slot2);
+        if (info >= 0 && info < NB) draw_info(info, ncols, nrows);
         refresh();
         napms(30);
     }
